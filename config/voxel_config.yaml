@@ -1,0 +1,32 @@
+# Voxel Grid Configuration
+# Default settings for Events ↔ Voxel conversion
+
+# Time parameters
+total_duration_ms: 100  # Fixed input duration in milliseconds
+num_bins: 16           # Number of temporal bins (100ms / 16 = 6.25ms per bin)
+
+# Sensor parameters  
+sensor_size:
+  width: 640           # DSEC standard resolution
+  height: 480         # DSEC standard resolution
+
+# Encoding parameters
+encoding:
+  temporal_bilinear: false  # Use simple accumulation (no bilinear interpolation)
+  algorithm: "sum_per_pixel"  # EventZoom-style summed per pixel
+
+# Decoding parameters  
+decoding:
+  algorithm: "uniform_random"  # Uniform random distribution within time bins
+  random_seed: null          # Set to int for reproducible results, null for random
+
+# File I/O
+file_formats:
+  voxel_output: "pt"    # PyTorch tensor format (.pt)
+  events_output: "h5"   # HDF5 format (.h5)
+
+# Debug settings
+debug:
+  save_visualizations: true
+  output_dir: "debug_output"
+  dpi: 150

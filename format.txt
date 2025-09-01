@@ -1,0 +1,199 @@
+EventMamba-FX Two-Step Generator 输出格式说明
+=================================================
+
+## 概述
+EventMamba-FX采用两步解耦架构生成标准DVS格式的事件数据：
+- Step 1: 生成同步的炫光事件和光源事件(固定从0ms开始)
+- Step 2: 双阶段独立事件合成，炫光+光源事件添加0-5ms随机偏移(模拟光源突然打开)，输出干净场景和污染场景
+
+## 输出目录结构
+
+```
+output/data/
+├── flare_events/                               # Step 1 输出：炫光事件
+│   ├── flare_sequence_1756276170478_00000.h5
+│   ├── flare_sequence_1756276340002_00001.h5
+│   └── ...
+├── light_source_events/                        # Step 1 输出：光源事件
+│   ├── light_source_sequence_1756276170478_00000.h5
+│   ├── light_source_sequence_1756276340002_00001.h5
+│   └── ...
+├── simple_method/                              # Step 2 Simple方法输出
+│   ├── background_with_light_events/           # Stage 1: 背景+光源（干净场景）
+│   │   ├── composed_1756280123456_00000_bg_light.h5
+│   │   └── ...
+│   └── background_with_flare_events/           # Stage 2: 背景+炫光（污染场景）
+│       ├── composed_1756280123456_00000_bg_flare.h5
+│       └── ...
+└── physics_method/                             # Step 2 Physics方法输出
+    ├── background_with_light_events/           # Stage 1: 背景+光源（智能筛选）
+    │   ├── composed_1756280123456_00000_bg_light.h5
+    │   └── ...
+    └── background_with_flare_events/           # Stage 2: 背景+炫光（智能筛选）
+        ├── composed_1756280123456_00000_bg_flare.h5
+        └── ...
+```
+
+## 数据格式规范
+
+### 标准DVS H5格式
+所有输出文件均采用标准DVS格式，兼容DSEC、Event-Camera等工具链：
+
+```
+文件名.h5
+└── /events/                    # 事件数据组
+    ├── t    [N] int64          # 时间戳（微秒），范围 0-100,000
+    ├── x    [N] uint16         # X坐标（像素），范围 0-639
+    ├── y    [N] uint16         # Y坐标（像素），范围 0-479
+    └── p    [N] int8           # 极性，1=ON事件，-1=OFF事件
+```
+
+### 时间戳规范
+- **时间单位**: 微秒（μs）
+- **时间范围**: 0-100,000μs（炫光序列70-95ms + Step2随机偏移0-5ms）
+- **时间起点**: 每个文件的时间戳从0开始，已归一化
+
+### 分辨率规范
+- **图像分辨率**: 640×480（DSEC标准）
+- **坐标系**: 左上角原点(0,0)，右下角(639,479)
+
+## 文件读取方法
+
+### Python读取示例
+
+```python
+import h5py
+import numpy as np
+
+def load_dvs_events(file_path):
+    """加载DVS格式事件数据"""
+    with h5py.File(file_path, 'r') as f:
+        events_group = f['events']
+        
+        # 读取事件数据
+        t = events_group['t'][:]    # 时间戳 (μs)
+        x = events_group['x'][:]    # X坐标
+        y = events_group['y'][:]    # Y坐标  
+        p = events_group['p'][:]    # 极性
+        
+        # 组合为事件矩阵 [N, 4]
+        events = np.column_stack([t, x, y, p])
+        
+        return events
+
+# 使用示例
+events = load_dvs_events('composed_1756280123456_00000_bg_light.h5')
+print(f"事件数量: {len(events)}")
+print(f"时间范围: {events[:, 0].min():.0f} - {events[:, 0].max():.0f} μs")
+print(f"ON事件数: {np.sum(events[:, 3] == 1)}")
+print(f"OFF事件数: {np.sum(events[:, 3] == -1)}")
+```
+
+### 元数据读取示例
+
+```python
+def load_metadata(file_path):
+    """读取文件元数据"""
+    with h5py.File(file_path, 'r') as f:
+        events_group = f['events']
+        
+        metadata = {}
+        for key in events_group.attrs.keys():
+            metadata[key] = events_group.attrs[key]
+        
+        return metadata
+
+# 使用示例
+metadata = load_metadata('composed_1756280123456_00000_bg_light.h5')
+for key, value in metadata.items():
+    print(f"{key}: {value}")
+```
+
+% 使用示例
+events = loadDVSEvents('composed_1756280123456_00000_bg_light.h5');
+```
+
+## 数据特征分析
+
+### Step 2输出的两种场景
+1. **Stage 1 - 干净场景** (`background_with_light_events/`)
+   - 内容: DSEC背景事件 + 光源事件
+   - 用途: 作为炫光去除的目标（Ground Truth）
+   - 特征: 不包含炫光污染，保持场景自然性
+
+2. **Stage 2 - 污染场景** (`background_with_flare_events/`) 
+   - 内容: DSEC背景事件 + 炫光事件
+   - 用途: 作为炫光去除的输入（需要清理的数据）
+   - 特征: 包含炫光污染，模拟真实拍摄场景
+
+### Simple vs Physics方法差异
+- **Simple方法**: 直接合并事件，保持所有事件
+- **Physics方法**: 基于权重图进行概率筛选，事件数量通常减少5-10%
+
+### 典型事件数量范围
+- **小规模炫光序列**: 50万-200万事件/文件
+- **大规模炫光序列**: 200万-600万事件/文件
+- **背景事件占比**: 通常占总事件的60-80%
+- **炫光事件占比**: 通常占总事件的20-40%
+
+## 质量验证方法
+
+### 数据完整性检查
+```python
+def validate_dvs_file(file_path):
+    """验证DVS文件格式和数据质量"""
+    with h5py.File(file_path, 'r') as f:
+        # 检查必需的数据集
+        required_datasets = ['events/t', 'events/x', 'events/y', 'events/p']
+        for dataset in required_datasets:
+            assert dataset in f, f"Missing dataset: {dataset}"
+        
+        events_group = f['events']
+        
+        # 检查数据类型
+        assert events_group['t'].dtype == 'int64', "时间戳应为int64"
+        assert events_group['x'].dtype == 'uint16', "X坐标应为uint16"
+        assert events_group['y'].dtype == 'uint16', "Y坐标应为uint16"
+        assert events_group['p'].dtype == 'int8', "极性应为int8"
+        
+        # 检查数据范围
+        t_data = events_group['t'][:]
+        x_data = events_group['x'][:]
+        y_data = events_group['y'][:]
+        p_data = events_group['p'][:]
+        
+        assert len(t_data) == len(x_data) == len(y_data) == len(p_data), "数据长度不一致"
+        assert np.all(t_data >= 0) and np.all(t_data <= 100000), "时间戳范围错误"
+        assert np.all(x_data >= 0) and np.all(x_data < 640), "X坐标范围错误"
+        assert np.all(y_data >= 0) and np.all(y_data < 480), "Y坐标范围错误"
+        assert np.all(np.isin(p_data, [1, -1])), "极性值应为1或-1"
+        
+        # 检查时间戳顺序
+        assert np.all(np.diff(t_data) >= 0), "时间戳应为非递减序列"
+        
+        print(f"✅ {file_path} 验证通过")
+        return True
+
+### 转换为DAVIS格式
+```python
+def convert_to_davis_format(dvs_file, output_file):
+    """转换为DAVIS .aedat格式（简化版）"""
+    events = load_dvs_events(dvs_file)
+    
+    with open(output_file, 'w') as f:
+        f.write("#!AER-DAT2.0\n")
+        f.write("# This is a generated file\n")
+        f.write("# Data format is: x y pol ts(us)\n")
+        
+        for event in events:
+            t, x, y, p = event
+            pol = 1 if p > 0 else 0
+            f.write(f"{int(x)} {int(y)} {pol} {int(t)}\n")
+```
+
+## 联系信息
+如需更多技术支持或格式相关问题，请参考项目文档或联系开发团队。
+
+生成时间: 2025-08-28
+格式版本: v2.0
+兼容工具: DSEC, Event-Camera, DVS346, 自定义处理工具链
