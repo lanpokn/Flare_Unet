@@ -188,3 +188,16 @@ visualizer.visualize_original_events(events, sensor_size)
 - **可视化专业**: 10+张图表提供全方位debug支持
 
 这不是理论上的完美，而是工程上的实用和简洁。每个模块都遵循单一职责原则，可视化功能独立，便于维护和扩展。
+
+## 环境启动命令
+
+**快速启动虚拟环境** (每次使用前执行):
+```bash
+cd /mnt/e/2025/event_flick_flare/Unet_main && eval "$(conda shell.bash hook)" && conda activate Umain
+```
+
+**环境验证**:
+```bash
+python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+python -c "import numpy, h5py, matplotlib; print('Dependencies OK')"
+```
