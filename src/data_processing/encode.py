@@ -38,19 +38,35 @@ def load_h5_events(file_path):
         t = events_group['t'][:]      # timestamps in microseconds
         x = events_group['x'][:]      # x coordinates  
         y = events_group['y'][:]      # y coordinates
-        p = events_group['p'][:]      # polarities (1, -1)
+        p = events_group['p'][:]      # polarities (raw format)
+        
+    # Apply universal polarity rule: 1 is positive, everything else is negative
+    # This handles all formats: {0,1}, {-1,1}, {0,1,2}, etc.
+    unique_polarities = np.unique(p)
+    p_converted = np.where(p == 1, 1, -1)
+    
+    # Report conversion
+    pos_count = len(p[p == 1])
+    neg_count = len(p) - pos_count
+    print(f"Applied universal polarity rule: 1→positive, non-1→negative")
+    print(f"Original values: {unique_polarities}")
+    print(f"Converted: {pos_count:,} positive (+1), {neg_count:,} negative (-1)")
         
     # Stack into (N, 4) array: [t, x, y, p]
-    events_np = np.column_stack([t, x, y, p])
+    events_np = np.column_stack([t, x, y, p_converted])
     return events_np
 
-def events_to_voxel(events_np, num_bins=16, sensor_size=(480, 640)):
-    """Convert events to voxel grid representation using simple accumulation
+def events_to_voxel(events_np, num_bins=32, sensor_size=(480, 640), fixed_duration_us=100000):
+    """Convert events to voxel grid representation using FIXED time intervals
+    
+    CRITICAL: Uses fixed time duration for training/testing consistency!
     
     Args:
         events_np: NumPy array (N, 4) with [t, x, y, p]
-        num_bins: Number of temporal bins
+        num_bins: Number of temporal bins (default 32 for better temporal resolution)
         sensor_size: Sensor resolution (H, W)
+        fixed_duration_us: Fixed time duration in microseconds (default 100ms = 100,000μs)
+                          This ensures consistent temporal resolution across datasets
         
     Returns:
         voxel: PyTorch tensor (num_bins, H, W)
@@ -67,11 +83,15 @@ def events_to_voxel(events_np, num_bins=16, sensor_size=(480, 640)):
     ys = events_np[:, 2].astype(int)  # y coordinates  
     ps = events_np[:, 3]  # polarities
     
-    # Find time range
-    t_min, t_max = ts.min(), ts.max()
-    dt = (t_max - t_min) / num_bins if t_max > t_min else 1
+    # Use FIXED time interval for consistency across datasets
+    # This is critical for training/testing generalization
+    t_min = ts.min()
+    dt = fixed_duration_us / num_bins  # Fixed bin duration
     
-    # Assign events to temporal bins
+    print(f"Using FIXED temporal bins: {num_bins} bins × {dt/1000:.2f}ms = {fixed_duration_us/1000:.1f}ms total")
+    print(f"Data time range: {t_min:.0f} - {ts.max():.0f}μs ({(ts.max()-t_min)/1000:.1f}ms)")
+    
+    # Assign events to temporal bins using fixed intervals
     bin_indices = np.clip(((ts - t_min) / dt).astype(int), 0, num_bins - 1)
     
     # Accumulate events in each bin

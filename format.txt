@@ -1,3 +1,7 @@
+"E:\2025\event_flick_flare\main\output\data_simu\physics_method"
+输入background_with_flare_events
+真值background_with_light_events
+
 EventMamba-FX Two-Step Generator 输出格式说明
 =================================================
 

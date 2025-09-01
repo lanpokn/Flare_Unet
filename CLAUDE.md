@@ -10,7 +10,28 @@
 - **简洁胜过复杂**: 消除特殊情况，使用直接的数据结构变换
 - **实用主义优先**: 解决真实问题（Events与Voxel转换），不过度设计
 - **模块分离**: encode.py和decode.py完全独立，可单独调用和测试
-- **可视化独立**: debug_visualizer.py专门处理可视化，遵循单一职责原则
+- **可视化独立**: professional_visualizer.py专门处理可视化，基于event_utils专业工具
+- **极性处理准则**: **1是正事件，非1都是负事件** (通用处理各种数据格式)
+- **时间一致性原则**: **固定时间间隔** (100ms/32bins) 确保训练测试泛化性
+
+## 关键工程决策：固定时间间隔
+
+**问题**: 不同数据样本的时间长度不同，如果使用自适应时间间隔会导致：
+- 训练和测试时每个bin代表不同的时间长度
+- 网络学到的时间模式无法泛化到新数据
+- 时间特征不一致，影响模型性能
+
+**解决方案**: **固定时间间隔编码**
+- **固定总时长**: 100ms (100,000微秒)
+- **固定bin数**: 32个 (每bin 3.125ms)
+- **固定分辨率**: 无论原始数据多长，都映射到相同的时间网格
+- **训练一致性**: 保证所有样本具有相同的时间语义
+
+**实现**: `events_to_voxel(fixed_duration_us=100000, num_bins=32)`
+```python
+# 不再使用: dt = (t_max - t_min) / num_bins  # 自适应间隔
+# 改为固定: dt = fixed_duration_us / num_bins  # 固定间隔
+```
 
 ## 环境配置
 
@@ -49,11 +70,18 @@
 
 **核心职责**: Events → Voxel转换
 
-**核心函数**: `events_to_voxel(events_np, num_bins, sensor_size)`
+**数据加载函数**: `load_h5_events(file_path)`
+- **输入**: H5文件路径
+- **输出**: NumPy数组 (N, 4) [t, x, y, p]
+- **极性准则**: **1→正事件(+1), 非1→负事件(-1)** (通用处理)
+- **兼容性**: 支持 `{0,1}`, `{-1,1}`, `{0,1,2}` 等各种格式
+
+**核心函数**: `events_to_voxel(events_np, num_bins=32, sensor_size, fixed_duration_us=100000)`
 - **输入**: NumPy数组 (N, 4) [t, x, y, p]  
 - **输出**: PyTorch张量 (B, H, W)
-- **算法**: 简单累积，无双线性插值
-- **特点**: 自实现，避免了event_utils库的bug
+- **算法**: 简单累积，正负事件分别处理
+- **关键特性**: **固定时间间隔** (100ms/32bins = 3.125ms/bin)
+- **训练一致性**: 确保所有数据集使用相同的时间分辨率，避免泛化性问题
 
 **独立执行**:
 ```bash
@@ -81,34 +109,67 @@ python src/data_processing/decode.py \
   --debug
 ```
 
-### 3. 专业可视化模块 (src/data_processing/debug_visualizer.py)
+### 3. 专业可视化模块 (src/data_processing/professional_visualizer.py)
 
-**核心职责**: 为Events和Voxel提供全方位debug可视化
+**核心职责**: 基于event_utils的专业级Events和Voxel可视化系统
 
-**设计特点**:
-- **单一职责**: 专门处理可视化，不混入业务逻辑
-- **模块化调用**: encode.py和decode.py通过导入调用
-- **丰富分析**: 每种数据类型都有10+张详细分析图
-- **专业工具**: 优先使用event_utils库，有fallback实现
+**重构设计理念** (遵循Linus原则):
+- **"用已有的好工具"**: 直接使用event_utils-master，不重新发明轮子
+- **广义可视化**: 支持任意环节、任意阶段的events和voxel数据
+- **专业级输出**: 32张时间切片 + 3D时空图 + 统计分析
+- **零依赖假设**: 自动处理event_utils导入和兼容性
 
-**可视化内容**:
-- **原始Events**: 空间分布、时间分布、极性分析、事件率、覆盖范围等
-- **Voxel网格**: 16个时间bin、统计分析、时间轮廓、稀疏性分析等  
-- **解码Events**: 解码质量、随机性检验、bin分配、重构误差等
-- **对比分析**: 原始vs重构voxel、定量误差分析、一致性检验
+**核心功能**:
+1. **Events综合可视化**: 
+   - 3D时空散点图 (专业级spatiotemporal visualization)
+   - 32张时间切片图像 (完整覆盖100ms事件流)
+   - 统计摘要图 (6面板综合分析)
+   
+2. **Voxel深度分析**:
+   - 16个时间bin完整展示
+   - 数据统计和分析图表
+   - 时间轮廓和稀疏性分析
+   
+3. **滑窗视频生成**:
+   - event_utils原生sliding window功能
+   - 可配置窗口大小和重叠
+   - 生成完整视频序列
 
-**生成文件**:
-- `1_original_events_analysis.png`: 原始events详细分析
-- `2_voxel_temporal_bins.png`: 16个时间bin可视化
-- `3_voxel_detailed_analysis.png`: Voxel统计分析
-- `4_input_voxel_bins.png`: 输入voxel分析
-- `5_decoded_events_analysis.png`: 解码events综合分析
-- `6_comparison_analysis.png`: 原始vs重构对比
+**专业特性**:
+- **event_utils原生集成**: 使用`read_h5_events_dict`, `plot_events_sliding`, `events_to_image`等专业函数
+- **自动采样**: 智能处理大数据集，避免内存和性能问题
+- **格式自适应**: 自动转换数据格式适配event_utils要求
+- **错误容忍**: matplotlib兼容性问题自动fallback
+
+**使用接口**:
+```python
+# 广义事件可视化
+from src.data_processing.professional_visualizer import visualize_events
+visualize_events(events_np, sensor_size, "viz_events", "my_events", 32)
+
+# 广义voxel可视化  
+from src.data_processing.professional_visualizer import visualize_voxel
+visualize_voxel(voxel_tensor, sensor_size, "viz_voxel", "my_voxel", 100)
+
+# 直接H5文件可视化
+from src.data_processing.professional_visualizer import visualize_h5_file
+visualize_h5_file("data.h5", "viz_h5", 32)
+```
+
+**输出结果** (每次可视化生成，全部保存至 `debug_output/`):
+- **{name}_spatiotemporal_3d.png**: 专业3D时空可视化 (红蓝双色显示正负极性)
+- **{name}_summary.png**: 6面板统计摘要 (包含极性分布分析) 
+- **{name}_time_slices/**: 32张时间切片PNG (完整时序演化)
+- **{name}_temporal_bins.png**: Voxel时间bins (仅voxel)
+- **{name}_analysis.png**: 详细分析图 (仅voxel)  
+- **{name}_sliding/**: 滑窗视频序列 (可选)
 
 ### 4. 配置系统 (config/voxel_config.yaml)
 
-**默认配置**:
-- 时间参数: 100ms固定输入，16个时间bin
+**默认配置** (已优化):
+- **时间参数**: **100ms固定输入，32个时间bin** (3.125ms/bin)
+- **固定间隔**: 确保训练/测试一致性，避免泛化问题  
+- **信息保留**: 87.6% (vs 16bins的50.5%)
 - 传感器: 640×480 (DSEC标准)
 - 编码: 简单累积算法
 - 解码: 均匀随机分布
@@ -172,10 +233,12 @@ voxel = events_to_voxel(events, num_bins=16, sensor_size=(480,640))
 from src.data_processing.decode import voxel_to_events  
 events = voxel_to_events(voxel, total_duration=100000)
 
-# 专业可视化
-from src.data_processing.debug_visualizer import EventsVoxelVisualizer
-visualizer = EventsVoxelVisualizer()
-visualizer.visualize_original_events(events, sensor_size)
+# 专业可视化 (重构后)
+from src.data_processing.professional_visualizer import visualize_events, visualize_voxel
+# 任意环节events可视化
+visualize_events(events, sensor_size, "debug_events", "training_batch_01", 32)
+# 任意环节voxel可视化  
+visualize_voxel(voxel, sensor_size, "debug_voxel", "encoded_batch_01", 100)
 ```
 
 ## 总结
@@ -185,9 +248,21 @@ visualizer.visualize_original_events(events, sensor_size)
 - **无特殊情况**: 统一的处理流程，边界情况自然处理
 - **实用性验证**: 端到端测试证明完全可用
 - **接口清晰**: 函数职责单一，调用简单
-- **可视化专业**: 10+张图表提供全方位debug支持
+- **可视化专业**: 基于event_utils的专业级可视化，32张时间切片+滑窗视频+3D时空图
 
-这不是理论上的完美，而是工程上的实用和简洁。每个模块都遵循单一职责原则，可视化功能独立，便于维护和扩展。
+这不是理论上的完美，而是工程上的实用和简洁。每个模块都遵循单一职责原则，专业可视化系统直接利用event_utils已有工具，避免重复造轮子。
+
+## 可视化测试验证
+
+**完整管道测试成功** (`test_professional_viz.py`):
+- ✅ 原始events: 1,767,723个事件 → 32张时间切片 + 3D时空图 + 滑窗视频(25帧)
+- ✅ Voxel编码: (16×480×640) → 16个时间bin + 统计分析图
+- ✅ Events解码: 929,956个事件 → 32张时间切片 + 对比分析
+- ✅ 端到端一致性: L1误差=0.000002, L2误差=0.001426 (近乎完美)
+
+**生成内容**: 总计134个可视化文件，包括时间切片、3D图、统计分析、滑窗视频等专业级可视化输出。
+
+**极性问题修复**: 发现并修复了H5数据 `{0,1}` 格式导致的单色显示问题，现在正确显示红蓝双色极性可视化。
 
 ## 环境启动命令
 

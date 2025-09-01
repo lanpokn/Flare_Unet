@@ -8,7 +8,8 @@
       "Bash(source ~/.bashrc)",
       "Bash(mv:*)",
       "Bash(ls:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(python test:*)"
     ],
     "deny": []
   }
