@@ -12,7 +12,8 @@
       "Bash(python test:*)",
       "Bash(python:*)",
       "Bash(tree:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": []
   }

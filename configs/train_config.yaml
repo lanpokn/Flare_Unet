@@ -1,0 +1,115 @@
+# Training Configuration for Event-Voxel Denoising with pytorch-3dunet
+# Based on 3D regression task (denoising) configuration template
+
+# Data loading configuration
+loaders:
+  # Custom dataset configuration for EventVoxelDataset
+  dataset: EventVoxelDataset
+  # Dataset paths (customize these for your data)
+  train_path: 
+    noisy: "/path/to/training/noisy_events"      # Directory with noisy event H5 files
+    clean: "/path/to/training/clean_events"      # Directory with clean event H5 files
+  val_path:
+    noisy: "/path/to/validation/noisy_events"    # Directory with validation noisy events
+    clean: "/path/to/validation/clean_events"    # Directory with validation clean events
+  
+  # DataLoader parameters
+  batch_size: 4           # Batch size (adjust based on GPU memory)
+  num_workers: 4          # Number of data loading workers
+  
+  # Augmentation and preprocessing
+  transformer:
+    train:
+      - name: Normalize  # Normalize voxel values
+      # Add other transforms as needed
+    test:
+      - name: Normalize
+
+# Dataset-specific configuration (EventVoxelDataset parameters)
+dataset:
+  sensor_size: [480, 640]      # Sensor resolution (H, W) for DSEC format
+  segment_duration_us: 20000   # 20ms per segment (memory optimization)
+  num_bins: 8                  # 8 temporal bins per 20ms segment
+  num_segments: 5              # 5 segments per 100ms H5 file
+
+# 3D U-Net model configuration  
+model:
+  name: UNet3D              # Standard 3D U-Net
+  # Input/output channels
+  in_channels: 1            # Single channel input (voxel grid)
+  out_channels: 1           # Single channel output (denoised voxel)
+  
+  # Architecture parameters
+  f_maps: 32                # Base number of feature maps
+  layer_order: gcr          # Group normalization + Conv + ReLU
+  num_groups: 8             # For GroupNorm
+  num_levels: 4             # Number of encoder/decoder levels
+  final_sigmoid: false      # No sigmoid for MSE regression loss
+  
+  # Advanced options
+  conv_kernel_size: 3       # Convolution kernel size
+  pool_kernel_size: 2       # Pooling kernel size
+
+# Loss function configuration
+loss:
+  name: MSELoss             # Mean Squared Error for regression (denoising)
+  # Alternative losses for experimentation:
+  # name: L1Loss            # Mean Absolute Error  
+  # name: SmoothL1Loss      # Less sensitive to outliers
+
+# Optimizer configuration
+optimizer:
+  name: Adam
+  learning_rate: 0.0002     # Learning rate
+  weight_decay: 0.00001     # L2 regularization
+
+# Learning rate scheduler
+lr_scheduler:
+  name: MultiStepLR
+  milestones: [10, 20, 30]  # Epochs to reduce LR
+  gamma: 0.2                # LR reduction factor
+
+# Training process configuration
+trainer:
+  # Checkpointing
+  checkpoint_dir: checkpoints/event_voxel_denoising
+  resume: null              # Path to resume from checkpoint (null = start from scratch)
+  
+  # Training duration
+  max_num_epochs: 50        # Maximum number of epochs
+  max_num_iterations: 1000000  # Maximum iterations (whichever comes first)
+  
+  # Validation and logging
+  validate_after_iters: 500  # Validate every N iterations
+  log_after_iters: 100      # Log training progress every N iterations
+  max_num_workers: 8        # Max workers for data loading
+  
+  # Early stopping (optional)
+  # eval_score_higher_is_better: false  # For loss-based metrics (MSE, L1)
+
+# Evaluation metrics during training
+eval_metric:
+  name: MeanSquaredError    # Primary validation metric
+  # Additional metrics can be added:
+  # - name: PSNR            # Peak Signal-to-Noise Ratio
+  # - name: MeanAbsoluteError
+
+# Logging and monitoring
+logger:
+  name: TensorBoardLogger
+  log_dir: logs/event_voxel_denoising
+
+# Device configuration
+device: cuda               # Use GPU if available, falls back to CPU
+
+# Random seed for reproducibility  
+manual_seed: 42
+
+# Data format specifications (for pytorch-3dunet compatibility)
+# Input format: (batch_size, channels, depth, height, width)
+# Our format: (batch_size, 1, 8, 480, 640) 
+#   - batch_size: Variable
+#   - channels: 1 (single voxel channel)  
+#   - depth: 8 (temporal bins for 20ms segment)
+#   - height: 480 (sensor height)
+#   - width: 640 (sensor width)
