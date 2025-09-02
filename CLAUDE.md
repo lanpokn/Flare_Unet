@@ -563,16 +563,41 @@ python main.py inference --config configs/inference_config.yaml \
 - **批处理**: 多文件并行处理
 - **监控系统**: 训练过程可观测性
 
+## 当前状况记录 - **2025-01-03调试阶段**
+
+### 成功集成情况
+✅ **数据集成功识别**: 500个H5文件对正确匹配 (background_with_flare_events ↔ background_with_light_events)
+✅ **训练样本生成**: 2500个训练样本 (每个100ms文件→5个20ms段)  
+✅ **UNet3D模型创建**: pytorch-3dunet模型成功加载 (13,183参数)
+✅ **自定义训练循环**: 完全摆脱pytorch-3dunet框架，只使用其UNet3D模型
+✅ **数据流配置**: 20ms/8bins = 2.5ms per bin (正确的分段策略)
+
+### 当前问题和调试重点
+❌ **内存问题**: 训练启动后被系统Killed，需要大幅减小模型参数
+❌ **数据读取验证**: 需要确认真的读取到了physics_method数据，不是其他测试数据
+❌ **Bug修复阶段**: 新写的代码必然存在大量bug，需要耐心逐一修复
+
+### 关键技术决策
+- **任务性质**: **炫光去除(Deflare)** - 从background_with_flare_events去除炫光得到background_with_light_events
+- **数据路径**: `/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/`
+- **文件命名**: `composed_XXXXX_bg_flare.h5` ↔ `composed_XXXXX_bg_light.h5`
+- **数据特点**: 目前数据集不分train/test/inference，全部都是训练数据
+
+### 下一步调试计划
+1. 大幅减小模型参数 (f_maps, num_levels等)
+2. 验证数据读取策略确实读取了physics_method数据
+3. 逐步修复训练过程中的bugs
+4. 确保20ms事件数据正确voxel化为8段
+
 ## 使用指南
 
 ### 环境准备
 ```bash
-# 安装pytorch-3dunet
-conda install -c conda-forge pytorch-3dunet
+# 激活环境 (每次使用前)
+eval "$(conda shell.bash hook)" && conda activate Umain
 
-# 验证安装
-which train3dunet
-which predict3dunet
+# 验证pytorch-3dunet (only UNet3D model needed)
+python -c "from pytorch3dunet.unet3d.model import UNet3D; print('UNet3D available')"
 ```
 
 ### 数据准备

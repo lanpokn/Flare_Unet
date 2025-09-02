@@ -25,21 +25,21 @@ loaders:
 # Dataset-specific configuration (HDF5Dataset parameters)
 # Note: Our test data is already in (8, 480, 640) format - no additional processing needed
 
-# 3D U-Net model configuration (MINIMAL for testing)
+# 3D U-Net model configuration (ULTRA-MINIMAL for debugging)
 model:
   name: UNet3D              # Standard 3D U-Net
   # Input/output channels
   in_channels: 1            # Single channel input (voxel grid)
-  out_channels: 1           # Single channel output (denoised voxel)
+  out_channels: 1           # Single channel output (deflared voxel)
   
-  # Architecture parameters (REDUCED for memory efficiency)
-  f_maps: 8                 # Very small feature maps (was 32)
+  # Architecture parameters (ULTRA-REDUCED for debugging)
+  f_maps: [4, 8]            # 极小特征图 (2层: 4->8)
   layer_order: gcr          # Group normalization + Conv + ReLU
-  num_groups: 2             # Reduced groups (was 8)
-  num_levels: 2             # Fewer levels (was 4) 
+  num_groups: 1             # 最小组数 (1 instead of 2) 
+  num_levels: 2             # 最小层数 (至少需要2层)
   final_sigmoid: false      # No sigmoid for MSE regression loss
   
-  # Advanced options
+  # Advanced options (minimal)
   conv_kernel_size: 3       # Convolution kernel size
   pool_kernel_size: 2       # Pooling kernel size
 
@@ -62,20 +62,20 @@ lr_scheduler:
   milestones: [10, 20, 30]  # Epochs to reduce LR
   gamma: 0.2                # LR reduction factor
 
-# Training process configuration (MINIMAL for testing)
+# Training process configuration (ULTRA-MINIMAL for debugging)
 trainer:
   # Checkpointing
   checkpoint_dir: checkpoints/event_voxel_deflare
   resume: null              # Path to resume from checkpoint (null = start from scratch)
   
-  # Training duration (VERY SHORT for testing)
-  max_num_epochs: 1         # Just 1 epoch for testing
-  max_num_iterations: 10    # Very few iterations for testing
+  # Training duration (极短用于调试)
+  max_num_epochs: 1         # 只训练1个epoch
+  max_num_iterations: 3     # 只训练3个iteration调试
   
   # Validation and logging
-  validate_after_iters: 5   # Validate every 5 iterations  
-  log_after_iters: 1        # Log every iteration for debugging
-  max_num_workers: 2        # Reduced workers
+  validate_after_iters: 2   # 每2个iteration验证一次
+  log_after_iters: 1        # 每个iteration都记录日志
+  max_num_workers: 0        # 单线程
   
   # Early stopping (optional)
   # eval_score_higher_is_better: false  # For loss-based metrics (MSE, L1)
@@ -92,7 +92,7 @@ logger:
   log_dir: logs/event_voxel_denoising
 
 # Device configuration
-device: cuda               # Use GPU if available, falls back to CPU
+device: cuda               # 必须使用GPU，不允许CPU模式
 
 # Random seed for reproducibility  
 manual_seed: 42
