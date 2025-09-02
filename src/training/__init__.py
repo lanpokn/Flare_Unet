@@ -1,0 +1,1 @@
+# Training module for custom event-voxel denoising

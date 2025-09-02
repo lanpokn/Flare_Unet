@@ -1,14 +1,14 @@
-# Test/Evaluation Configuration for Event-Voxel Denoising
+# Test/Evaluation Configuration for Event-Voxel Deflare
 # Used for evaluating trained models on test datasets
 
 # Data loading configuration
 loaders:
   # Test dataset configuration
   dataset: EventVoxelDataset
-  # Test data paths (customize for your test data)
+  # Test data paths (using actual test data directories)
   test_path:
-    noisy: "/path/to/test/noisy_events"       # Directory with test noisy event H5 files  
-    clean: "/path/to/test/clean_events"       # Directory with test clean event H5 files
+    noisy: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events_test"
+    clean: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events_test"
   
   # DataLoader parameters for testing
   batch_size: 1           # Usually 1 for testing to process each sample individually
@@ -32,16 +32,16 @@ model:
   # Model architecture (MUST match training config exactly)
   in_channels: 1
   out_channels: 1
-  f_maps: 32
+  f_maps: 8                 # Match training: reduced from 32 to 8
   layer_order: gcr
-  num_groups: 8
-  num_levels: 4
+  num_groups: 2             # Match training: reduced from 8 to 2
+  num_levels: 2             # Match training: reduced from 4 to 2
   final_sigmoid: false      # Match training configuration
   conv_kernel_size: 3
   pool_kernel_size: 2
   
   # Path to trained model checkpoint
-  path: checkpoints/event_voxel_denoising/best_checkpoint.pytorch
+  path: checkpoints/event_voxel_deflare/best_checkpoint.pytorch
 
 # Predictor configuration
 predictor:

@@ -379,11 +379,19 @@ visualize_voxel(voxel, sensor_size, "debug_output", "voxel_only", 100)    # 固�
 
 **极性问题修复**: 发现并修复了H5数据 `{0,1}` 格式导致的单色显示问题，现在正确显示红蓝双色极性可视化。
 
-# 3DUnet训练管道集成 - **2025-01-02完成**
+# 3DUnet训练管道集成 - **2025-01-02完成** - **炫光去除(Deflare)**
 
-## 核心架构设计
+## 核心架构设计 - 炫光去除任务
 
-基于pytorch-3dunet框架的完整事件去噪训练与推理系统，遵循**"关注点分离"**原则：
+基于pytorch-3dunet框架的完整**事件炫光去除(Event Deflare)**训练与推理系统，遵循**"关注点分离"**原则：
+
+**重要更正**: 
+- **任务性质**: **炫光去除(Deflare)** - 不是去噪(Denoising)
+- **数据路径**: `E:/2025/event_flick_flare/main/output/data_simu/physics_method/`
+- **输入文件夹**: `background_with_flare_events/` (含炫光的背景事件H5文件)
+- **目标文件夹**: `background_with_light_events/` (仅有光源和背景的干净事件H5文件)
+- **训练目标**: 学习从含炫光事件中去除炫光，保留真实的背景和光源事件
+- **文件命名**: 原本的匹配方式是正确的，不需要修改
 
 ### 数据流架构
 ```

@@ -50,8 +50,12 @@ class ConfigLoader:
         config_path = Path(config_path)
         
         if not config_path.is_absolute():
-            # If relative path, assume it's in configs directory
-            config_path = self.configs_dir / config_path
+            # If relative path, resolve relative to current working directory first
+            if Path(config_path).exists():
+                config_path = Path(config_path).resolve()
+            else:
+                # If not found, try configs directory
+                config_path = self.configs_dir / config_path
         
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")

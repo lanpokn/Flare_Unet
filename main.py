@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main entry point for Event-Voxel Denoising with pytorch-3dunet
+Main entry point for Event-Voxel Denoising with Custom Training System
 Supports three modes: train, test, inference
 
 Usage:
@@ -11,7 +11,6 @@ Usage:
 
 import argparse
 import sys
-import subprocess
 import logging
 from pathlib import Path
 import torch
@@ -25,6 +24,7 @@ sys.path.append(str(project_root))
 from src.utils.config_loader import ConfigLoader
 from src.data_processing.encode import load_h5_events, events_to_voxel
 from src.data_processing.decode import voxel_to_events
+from src.training.training_factory import TrainingFactory
 
 class EventVoxelPipeline:
     """
@@ -47,7 +47,7 @@ class EventVoxelPipeline:
     
     def train_mode(self, config_path: str) -> int:
         """
-        Training mode - uses pytorch-3dunet's train3dunet command
+        Training mode - uses custom training system with pytorch-3dunet UNet3D model
         
         Args:
             config_path: Path to training configuration YAML
@@ -55,46 +55,42 @@ class EventVoxelPipeline:
         Returns:
             Exit code (0 = success, non-zero = error)
         """
-        self.logger.info("=== EVENT-VOXEL TRAINING MODE ===")
+        self.logger.info("=== EVENT-VOXEL CUSTOM TRAINING MODE ===")
         
         try:
             # Load and validate training configuration
             config = self.config_loader.load_train_config(config_path)
             self.logger.info(f"Loaded training config from: {config_path}")
             
-            # Check if pytorch-3dunet is available
-            result = subprocess.run(['which', 'train3dunet'], 
-                                  capture_output=True, text=True)
-            if result.returncode != 0:
-                self.logger.error("pytorch-3dunet not found! Please install: conda install -c conda-forge pytorch-3dunet")
-                return 1
-            
-            self.logger.info("Starting pytorch-3dunet training...")
+            self.logger.info("Starting custom training system...")
             self.logger.info(f"Model: {config['model']['name']} ({config['model']['f_maps']} feature maps)")
             self.logger.info(f"Loss: {config['loss']['name']}")
             self.logger.info(f"Optimizer: {config['optimizer']['name']} (LR: {config['optimizer']['learning_rate']})")
             
-            # Execute pytorch-3dunet training
-            cmd = ['train3dunet', '--config', config_path]
-            self.logger.info(f"Executing: {' '.join(cmd)}")
+            # 创建训练工厂
+            training_factory = TrainingFactory(config)
             
-            result = subprocess.run(cmd)
+            # 设置完整训练流程
+            trainer = training_factory.setup_complete_training()
             
-            if result.returncode == 0:
-                self.logger.info("Training completed successfully!")
-                self.logger.info(f"Checkpoints saved to: {config['trainer']['checkpoint_dir']}")
-            else:
-                self.logger.error(f"Training failed with exit code: {result.returncode}")
+            # 开始训练
+            best_val_loss = trainer.train()
             
-            return result.returncode
+            self.logger.info("Training completed successfully!")
+            self.logger.info(f"Best validation loss: {best_val_loss:.6f}")
+            self.logger.info(f"Checkpoints saved to: {config['trainer']['checkpoint_dir']}")
+            
+            return 0
             
         except Exception as e:
             self.logger.error(f"Training mode error: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return 1
     
     def test_mode(self, config_path: str) -> int:
         """
-        Testing mode - uses pytorch-3dunet's predict3dunet command
+        Testing mode - evaluates trained model on test dataset
         
         Args:
             config_path: Path to test configuration YAML
@@ -109,39 +105,83 @@ class EventVoxelPipeline:
             config = self.config_loader.load_test_config(config_path)
             self.logger.info(f"Loaded test config from: {config_path}")
             
-            # Check if pytorch-3dunet is available
-            result = subprocess.run(['which', 'predict3dunet'], 
-                                  capture_output=True, text=True)
-            if result.returncode != 0:
-                self.logger.error("pytorch-3dunet not found! Please install: conda install -c conda-forge pytorch-3dunet")
-                return 1
-            
             # Verify model checkpoint exists
             model_path = config['model']['path']
             if not Path(model_path).exists():
                 self.logger.error(f"Model checkpoint not found: {model_path}")
                 return 1
             
-            self.logger.info("Starting pytorch-3dunet evaluation...")
+            self.logger.info("Starting custom evaluation...")
             self.logger.info(f"Model: {model_path}")
-            self.logger.info(f"Output: {config['predictor']['output_dir']}")
             
-            # Execute pytorch-3dunet prediction/evaluation
-            cmd = ['predict3dunet', '--config', config_path]
-            self.logger.info(f"Executing: {' '.join(cmd)}")
+            # 创建训练工厂（仅用于创建模型和数据集）
+            training_factory = TrainingFactory(config)
             
-            result = subprocess.run(cmd)
+            # 创建模型和数据集
+            model = training_factory.create_model()
+            _, test_dataset = training_factory.create_datasets()  # 使用val作为test
+            _, test_loader = training_factory.create_dataloaders(test_dataset, test_dataset)
             
-            if result.returncode == 0:
-                self.logger.info("Testing completed successfully!")
-                self.logger.info(f"Results saved to: {config['predictor']['output_dir']}")
+            # 加载checkpoint
+            device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+            checkpoint = torch.load(model_path, map_location=device)
+            
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
             else:
-                self.logger.error(f"Testing failed with exit code: {result.returncode}")
+                model.load_state_dict(checkpoint)
             
-            return result.returncode
+            model.to(device)
+            model.eval()
+            
+            # 评估模型
+            total_loss = 0.0
+            num_batches = 0
+            criterion = torch.nn.MSELoss()
+            
+            self.logger.info(f"Evaluating on {len(test_dataset)} samples...")
+            
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(test_loader):
+                    inputs = batch['raw'].to(device)
+                    targets = batch['label'].to(device)
+                    
+                    outputs = model(inputs)
+                    loss = criterion(outputs, targets)
+                    
+                    total_loss += loss.item()
+                    num_batches += 1
+                    
+                    if batch_idx % 10 == 0:
+                        self.logger.info(f"Batch {batch_idx}/{len(test_loader)}, Loss: {loss.item():.6f}")
+            
+            avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
+            
+            self.logger.info("Testing completed successfully!")
+            self.logger.info(f"Average test loss: {avg_loss:.6f}")
+            
+            # 保存结果
+            results = {
+                'test_loss': avg_loss,
+                'num_samples': len(test_dataset),
+                'model_path': model_path
+            }
+            
+            output_dir = Path(config.get('predictor', {}).get('output_dir', 'test_results'))
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            import json
+            with open(output_dir / 'test_results.json', 'w') as f:
+                json.dump(results, f, indent=2)
+            
+            self.logger.info(f"Results saved to: {output_dir}")
+            
+            return 0
             
         except Exception as e:
             self.logger.error(f"Testing mode error: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return 1
     
     def inference_mode(self, config_path: str, input_file: str, output_file: str) -> int:
@@ -286,13 +326,17 @@ class EventVoxelPipeline:
             return 1
     
     def _load_model(self, model_config: dict, device: str):
-        """Load trained pytorch-3dunet model"""
+        """Load trained UNet3D model using training factory"""
         try:
-            # This is a simplified loader - in practice you might need to use
-            # pytorch-3dunet's model loading utilities
+            # Use training factory to create model
+            config = {'model': model_config}
+            training_factory = TrainingFactory(config)
+            model = training_factory.create_model()
+            
+            # Load checkpoint
             checkpoint = torch.load(model_config['path'], map_location=device)
             
-            # Extract model state dict (pytorch-3dunet checkpoint format)
+            # Extract model state dict
             if 'model_state_dict' in checkpoint:
                 state_dict = checkpoint['model_state_dict']
             elif 'state_dict' in checkpoint:
@@ -300,31 +344,12 @@ class EventVoxelPipeline:
             else:
                 state_dict = checkpoint
             
-            # For now, we'll need to manually create the model
-            # In a full implementation, you'd use pytorch-3dunet's model factory
-            from pytorch3dunet.unet3d.model import UNet3D
-            
-            model = UNet3D(
-                in_channels=model_config['in_channels'],
-                out_channels=model_config['out_channels'],
-                f_maps=model_config['f_maps'],
-                layer_order=model_config.get('layer_order', 'gcr'),
-                num_groups=model_config.get('num_groups', 8),
-                num_levels=model_config.get('num_levels', 4),
-                final_sigmoid=model_config.get('final_sigmoid', False),
-                conv_kernel_size=model_config.get('conv_kernel_size', 3),
-                pool_kernel_size=model_config.get('pool_kernel_size', 2)
-            )
-            
             model.load_state_dict(state_dict)
             model.to(device)
             
-            self.logger.info(f"Model loaded successfully: {model_config['name']}")
+            self.logger.info(f"Model loaded successfully: {model_config.get('name', 'UNet3D')}")
             return model
             
-        except ImportError:
-            self.logger.error("pytorch-3dunet not properly installed. Cannot load model.")
-            raise
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             raise

@@ -1,4 +1,4 @@
-# Inference Configuration for Standalone Event Denoising
+# Inference Configuration for Standalone Event Deflare
 # Used for processing single H5 event files without ground truth
 
 # Model configuration (must match trained model exactly)
@@ -7,16 +7,16 @@ model:
   # Architecture parameters (MUST match training config)
   in_channels: 1
   out_channels: 1  
-  f_maps: 32
+  f_maps: 8                 # Match training: reduced from 32 to 8
   layer_order: gcr
-  num_groups: 8
-  num_levels: 4
+  num_groups: 2             # Match training: reduced from 8 to 2
+  num_levels: 2             # Match training: reduced from 4 to 2
   final_sigmoid: false
   conv_kernel_size: 3
   pool_kernel_size: 2
   
   # Path to trained model checkpoint  
-  path: checkpoints/event_voxel_denoising/best_checkpoint.pytorch
+  path: checkpoints/event_voxel_deflare/best_checkpoint.pytorch
 
 # Inference-specific configuration
 inference:

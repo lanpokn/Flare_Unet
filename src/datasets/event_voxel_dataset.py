@@ -39,11 +39,11 @@ class EventVoxelDataset(Dataset):
                  num_segments: int = 5,             # 5 segments per 100ms file
                  transform=None):
         """
-        Initialize EventVoxelDataset
+        Initialize EventVoxelDataset for deflare task
         
         Args:
-            noisy_events_dir: Directory containing noisy event H5 files
-            clean_events_dir: Directory containing clean ground truth H5 files
+            noisy_events_dir: Directory containing input events with flare (background_with_flare_events)
+            clean_events_dir: Directory containing clean ground truth events (background_with_light_events)
             sensor_size: (Height, Width) of sensor resolution
             segment_duration_us: Duration of each segment in microseconds (20ms)
             num_bins: Number of temporal bins per segment (8)
@@ -90,17 +90,28 @@ class EventVoxelDataset(Dataset):
         noisy_files = list(self.noisy_events_dir.glob("*.h5"))
         clean_files = list(self.clean_events_dir.glob("*.h5"))
         
-        # Extract base names for matching
-        noisy_names = {f.stem: f for f in noisy_files}
-        clean_names = {f.stem: f for f in clean_files}
+        # Extract base names for matching (deflare dataset naming convention)
+        # Flare files: composed_XXXXX_bg_flare.h5 → composed_XXXXX
+        # Clean files: composed_XXXXX_bg_light.h5 → composed_XXXXX
+        noisy_names = {}
+        for f in noisy_files:
+            # Remove _bg_flare suffix to get base name
+            base_name = f.stem.replace('_bg_flare', '')
+            noisy_names[base_name] = f
+        
+        clean_names = {}
+        for f in clean_files:
+            # Remove _bg_light suffix to get base name  
+            base_name = f.stem.replace('_bg_light', '')
+            clean_names[base_name] = f
         
         # Find matching pairs
         file_pairs = []
-        for name in noisy_names.keys():
-            if name in clean_names:
-                file_pairs.append((str(noisy_names[name]), str(clean_names[name])))
+        for base_name in noisy_names.keys():
+            if base_name in clean_names:
+                file_pairs.append((str(noisy_names[base_name]), str(clean_names[base_name])))
             else:
-                self.logger.warning(f"No matching clean file for noisy file: {name}")
+                self.logger.warning(f"No matching clean file for noisy file: {base_name}")
         
         if not file_pairs:
             raise ValueError("No matching H5 file pairs found!")

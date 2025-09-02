@@ -14,3 +14,13 @@ voxel越小越精确，但是速度越慢，越大越快，但是频闪信息，
 
 格式转换: pytorch-3dunet要求输入是 (C, Z, Y, X) 或 (Z, Y, X)。我们的Voxel是 (B, H, W)，其中 B 对应 Z (深度/时间)，H 对应 Y，W 对应 X。
 是不是完全可以正负事件分开，内存乘2？不过应该不是啥很重要的事情，先跑通吧
+
+目前Unet 3D可能是数据集读取上有问题，我可以让它参考encoder中的方法，自己读取数据做好，Unet3D只需要学会读voxel即可
+
+● 明白了！现在我理解整个流程：
+
+  1. 数据流: 自制events H5 → encoder → voxels → 3DUnet → output voxels → decoder → events H5
+  2. 不使用pytorch-3dunet的数据集: 我们需要自己的训练循环，只使用它的UNet3D模型
+  3. 分段策略: 100ms events → 5×20ms segments → 8 bins voxels每段
+
+  让我重新设计，创建自定义训练循环而不依赖pytorch-3dunet的训练框架：

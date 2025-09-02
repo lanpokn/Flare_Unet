@@ -1,49 +1,42 @@
-# Training Configuration for Event-Voxel Denoising with pytorch-3dunet
-# Based on 3D regression task (denoising) configuration template
+# Training Configuration for Event-Voxel DEFLARE (炫光去除) with Custom Training System
+# Task: Remove flare from background_with_flare_events → background_with_light_events
 
-# Data loading configuration
+# Data loading configuration for custom training system
 loaders:
-  # Custom dataset configuration for EventVoxelDataset
-  dataset: EventVoxelDataset
-  # Dataset paths (customize these for your data)
-  train_path: 
-    noisy: "/path/to/training/noisy_events"      # Directory with noisy event H5 files
-    clean: "/path/to/training/clean_events"      # Directory with clean event H5 files
-  val_path:
-    noisy: "/path/to/validation/noisy_events"    # Directory with validation noisy events
-    clean: "/path/to/validation/clean_events"    # Directory with validation clean events
+  # Real deflare dataset paths (WSL format)
+  train_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events"
+  train_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events"
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events"
   
-  # DataLoader parameters
-  batch_size: 4           # Batch size (adjust based on GPU memory)
-  num_workers: 4          # Number of data loading workers
+  # DataLoader parameters (极小参数用于测试)
+  batch_size: 1           # 单样本batch
+  num_workers: 0          # 单线程避免并发问题
   
-  # Augmentation and preprocessing
-  transformer:
-    train:
-      - name: Normalize  # Normalize voxel values
-      # Add other transforms as needed
-    test:
-      - name: Normalize
+  # Event-Voxel conversion parameters  
+  sensor_size: [480, 640]         # DSEC sensor resolution
+  segment_duration_us: 20000      # 20ms per segment
+  num_bins: 8                     # 8 temporal bins per segment
+  num_segments: 5                 # 5 segments per 100ms file
+  
+  # Data transforms (handled by EventVoxelDataset internally)
+  transform: null
 
-# Dataset-specific configuration (EventVoxelDataset parameters)
-dataset:
-  sensor_size: [480, 640]      # Sensor resolution (H, W) for DSEC format
-  segment_duration_us: 20000   # 20ms per segment (memory optimization)
-  num_bins: 8                  # 8 temporal bins per 20ms segment
-  num_segments: 5              # 5 segments per 100ms H5 file
+# Dataset-specific configuration (HDF5Dataset parameters)
+# Note: Our test data is already in (8, 480, 640) format - no additional processing needed
 
-# 3D U-Net model configuration  
+# 3D U-Net model configuration (MINIMAL for testing)
 model:
   name: UNet3D              # Standard 3D U-Net
   # Input/output channels
   in_channels: 1            # Single channel input (voxel grid)
   out_channels: 1           # Single channel output (denoised voxel)
   
-  # Architecture parameters
-  f_maps: 32                # Base number of feature maps
+  # Architecture parameters (REDUCED for memory efficiency)
+  f_maps: 8                 # Very small feature maps (was 32)
   layer_order: gcr          # Group normalization + Conv + ReLU
-  num_groups: 8             # For GroupNorm
-  num_levels: 4             # Number of encoder/decoder levels
+  num_groups: 2             # Reduced groups (was 8)
+  num_levels: 2             # Fewer levels (was 4) 
   final_sigmoid: false      # No sigmoid for MSE regression loss
   
   # Advanced options
@@ -52,7 +45,7 @@ model:
 
 # Loss function configuration
 loss:
-  name: MSELoss             # Mean Squared Error for regression (denoising)
+  name: MSELoss             # Mean Squared Error for regression (deflare)
   # Alternative losses for experimentation:
   # name: L1Loss            # Mean Absolute Error  
   # name: SmoothL1Loss      # Less sensitive to outliers
@@ -69,30 +62,29 @@ lr_scheduler:
   milestones: [10, 20, 30]  # Epochs to reduce LR
   gamma: 0.2                # LR reduction factor
 
-# Training process configuration
+# Training process configuration (MINIMAL for testing)
 trainer:
   # Checkpointing
-  checkpoint_dir: checkpoints/event_voxel_denoising
+  checkpoint_dir: checkpoints/event_voxel_deflare
   resume: null              # Path to resume from checkpoint (null = start from scratch)
   
-  # Training duration
-  max_num_epochs: 50        # Maximum number of epochs
-  max_num_iterations: 1000000  # Maximum iterations (whichever comes first)
+  # Training duration (VERY SHORT for testing)
+  max_num_epochs: 1         # Just 1 epoch for testing
+  max_num_iterations: 10    # Very few iterations for testing
   
   # Validation and logging
-  validate_after_iters: 500  # Validate every N iterations
-  log_after_iters: 100      # Log training progress every N iterations
-  max_num_workers: 8        # Max workers for data loading
+  validate_after_iters: 5   # Validate every 5 iterations  
+  log_after_iters: 1        # Log every iteration for debugging
+  max_num_workers: 2        # Reduced workers
   
   # Early stopping (optional)
   # eval_score_higher_is_better: false  # For loss-based metrics (MSE, L1)
 
-# Evaluation metrics during training
+# Evaluation metrics during training  
 eval_metric:
-  name: MeanSquaredError    # Primary validation metric
+  name: MSE                 # Use MSE instead of MeanSquaredError
   # Additional metrics can be added:
   # - name: PSNR            # Peak Signal-to-Noise Ratio
-  # - name: MeanAbsoluteError
 
 # Logging and monitoring
 logger:
