@@ -85,7 +85,10 @@ class ProfessionalEventVisualizer:
         # 2. Native 3D spatiotemporal series (with FIXED time intervals)
         self._create_native_3d_events_series(xs, ys, ts, ps, sensor_size, name_prefix, num_windows=8)
         
-        # 3. Time slice analysis (32 slices)
+        # 3. 2D temporal series with red/blue polarity (same time intervals as 3D)
+        self._create_2d_temporal_series(xs, ys, ts, ps, sensor_size, name_prefix, num_windows=8)
+        
+        # 4. Time slice analysis (32 slices) - for comparison
         self._create_time_slices(xs, ys, ts, ps, sensor_size, name_prefix, num_time_slices)
         
         # REMOVED: Multi-resolution slices - use FIXED 32 slices only
@@ -238,9 +241,9 @@ class ProfessionalEventVisualizer:
             
         # Use FIXED time intervals (same as voxel bins)
         t_min, t_max = ts.min(), ts.max()
-        # Fixed 100ms duration divided into windows
-        fixed_duration = 100000  # 100ms in microseconds
-        window_duration = fixed_duration / num_windows
+        # Use actual data duration divided into windows
+        actual_duration = t_max - t_min  # Use actual segment duration
+        window_duration = actual_duration / num_windows
         
         print(f"Creating {num_windows} native 3D spatiotemporal windows for {name_prefix}")
         
@@ -278,6 +281,59 @@ class ProfessionalEventVisualizer:
                            show_plot=False,
                            img_size=sensor_size,
                            show_axes=True)
+
+    def _create_2d_temporal_series(self, xs, ys, ts, ps, sensor_size, name_prefix, num_windows=8):
+        """Create series of 2D temporal images with red/blue polarity display"""
+        series_dir = self.output_dir / f"{name_prefix}_2d_temporal"
+        series_dir.mkdir(exist_ok=True)
+        
+        if len(xs) == 0:
+            return
+            
+        # Use FIXED time intervals (same as 3D windows)
+        t_min, t_max = ts.min(), ts.max()
+        # Use actual data duration divided into windows
+        actual_duration = t_max - t_min  # Use actual segment duration
+        window_duration = actual_duration / num_windows
+        
+        print(f"Creating {num_windows} 2D temporal images for {name_prefix}")
+        
+        import matplotlib.pyplot as plt
+        
+        for i in range(num_windows):
+            t_start = t_min + i * window_duration
+            t_end = t_start + window_duration
+            
+            # Select events in this time window
+            mask = (ts >= t_start) & (ts < t_end)
+            if not np.any(mask):
+                continue
+                
+            window_xs, window_ys, window_ts, window_ps = xs[mask], ys[mask], ts[mask], ps[mask]
+            
+            if len(window_xs) == 0:
+                continue
+                
+            # Create event image using event_utils (returns red/blue image)
+            event_img = events_to_image(window_xs, window_ys, window_ps, sensor_size=sensor_size)
+            
+            # Create matplotlib figure
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+            
+            # Display with RdBu colormap (red=positive, blue=negative)
+            im = ax.imshow(event_img, cmap='RdBu', vmin=-1, vmax=1)
+            ax.set_title(f'2D Temporal Window {i+1}/{num_windows}\n'
+                        f'Time: {(t_start-t_min)/1000:.1f}-{(t_end-t_min)/1000:.1f}ms\n'
+                        f'Events: {len(window_xs):,}')
+            ax.axis('off')
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+            cbar.set_label('Polarity (Red=+, Blue=-)')
+            
+            output_path = series_dir / f"temporal_{i:02d}.png"
+            plt.savefig(output_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
                    
     def _create_time_slices(self, xs, ys, ts, ps, sensor_size, name_prefix, num_slices):
         """Create time slice visualizations"""
@@ -598,6 +654,111 @@ def visualize_events_and_voxel(events_np, voxel_tensor, sensor_size=(480, 640),
     # Voxel visualization with FIXED 100ms
     viz.visualize_voxel_comprehensive(voxel_tensor, sensor_size, f"{name}_voxel", 100)
     viz.print_summary(name)
+
+def _extract_time_segment(events_np, segment_idx=1, num_segments=5, total_duration_us=100000):
+    """Extract a specific time segment from events for memory optimization
+    
+    Args:
+        events_np: Events array (N, 4) [t, x, y, p]
+        segment_idx: Which segment to extract (0-4, default=1 for 10-30ms)
+        num_segments: Total number of segments (default=5 for 20ms each)
+        total_duration_us: Total duration in microseconds (default=100ms)
+    
+    Returns:
+        segment_events: Events in the selected segment
+        segment_start_us: Start time of segment in microseconds
+        segment_duration_us: Duration of segment in microseconds
+    """
+    if len(events_np) == 0:
+        return np.array([]).reshape(0, 4), 0, 0
+        
+    t_min = events_np[:, 0].min()
+    t_max = events_np[:, 0].max()
+    
+    # Calculate segment parameters
+    segment_duration_us = total_duration_us / num_segments
+    segment_start_us = segment_idx * segment_duration_us
+    segment_end_us = (segment_idx + 1) * segment_duration_us
+    
+    # Convert to actual timestamps
+    actual_start = t_min + segment_start_us
+    actual_end = t_min + segment_end_us
+    
+    # Extract events in this segment
+    mask = (events_np[:, 0] >= actual_start) & (events_np[:, 0] < actual_end)
+    segment_events = events_np[mask].copy()
+    
+    # Adjust timestamps to start from 0 for this segment
+    if len(segment_events) > 0:
+        segment_events[:, 0] = segment_events[:, 0] - actual_start
+    
+    print(f"Extracted segment {segment_idx}: {segment_start_us/1000:.1f}-{segment_end_us/1000:.1f}ms "
+          f"({len(segment_events):,} events)")
+    
+    return segment_events, segment_start_us, segment_duration_us
+
+def visualize_complete_pipeline(input_events, input_voxel, output_events, output_voxel, 
+                               sensor_size=(480, 640), output_dir="debug_output", segment_idx=1):
+    """Complete 6-visualization pipeline with memory optimization: 2×2 events + 2 voxels
+    
+    Memory optimization: 100ms → 5×20ms segments, visualize segment_idx (default: 1, i.e. 10-30ms)
+    
+    Generates exactly 6 visualization results:
+    1. Input Events 3D spatiotemporal (segment 10-30ms)
+    2. Input Events 2D temporal (red/blue, segment 10-30ms)  
+    3. Input Events→Voxel (segment 10-30ms, 8 bins)
+    4. Output Events 3D spatiotemporal (segment 10-30ms)
+    5. Output Events 2D temporal (red/blue, segment 10-30ms)
+    6. Output Events→Voxel (re-encoded, segment 10-30ms, 8 bins)
+    """
+    viz = ProfessionalEventVisualizer(output_dir)
+    
+    print(f"=== Complete Pipeline Visualization: 6 Results (Segment {segment_idx}: 10-30ms) ===")
+    
+    # Extract segments for memory optimization
+    input_segment, input_start, segment_duration = _extract_time_segment(input_events, segment_idx)
+    output_segment, output_start, _ = _extract_time_segment(output_events, segment_idx)
+    
+    # Import encoding function for segment voxelization
+    try:
+        from .encode import events_to_voxel
+    except ImportError:
+        from encode import events_to_voxel
+    
+    # Create voxels from segments (20ms → 8 bins)
+    num_bins = 8  # 20ms / 8 = 2.5ms per bin
+    if len(input_segment) > 0:
+        input_segment_voxel = events_to_voxel(input_segment, num_bins=num_bins, 
+                                            sensor_size=sensor_size, 
+                                            fixed_duration_us=int(segment_duration))
+    else:
+        input_segment_voxel = torch.zeros((num_bins, sensor_size[0], sensor_size[1]))
+    
+    if len(output_segment) > 0:
+        output_segment_voxel = events_to_voxel(output_segment, num_bins=num_bins, 
+                                             sensor_size=sensor_size,
+                                             fixed_duration_us=int(segment_duration))
+    else:
+        output_segment_voxel = torch.zeros((num_bins, sensor_size[0], sensor_size[1]))
+    
+    # 1&2: Input Events Segment (3D + 2D)
+    print(f"Visualizing Input Events Segment {segment_idx} (3D + 2D temporal series)...")
+    viz.visualize_events_comprehensive(input_segment, sensor_size, f"input_events_seg{segment_idx}", 32)
+    
+    # 3: Input Events→Voxel Segment
+    print(f"Visualizing Input Events→Voxel Segment {segment_idx}...")
+    viz.visualize_voxel_comprehensive(input_segment_voxel, sensor_size, f"input_voxel_seg{segment_idx}", 20)
+    
+    # 4&5: Output Events Segment (3D + 2D)
+    print(f"Visualizing Output Events Segment {segment_idx} (3D + 2D temporal series)...")  
+    viz.visualize_events_comprehensive(output_segment, sensor_size, f"output_events_seg{segment_idx}", 32)
+    
+    # 6: Output Events→Voxel Segment (re-encoded)
+    print(f"Visualizing Output Events→Voxel Segment {segment_idx} (re-encoded)...")
+    viz.visualize_voxel_comprehensive(output_segment_voxel, sensor_size, f"output_voxel_seg{segment_idx}", 20)
+    
+    print(f"\n=== 6-Visualization Pipeline Complete (Segment {segment_idx}) ===")
+    viz.print_summary(f"complete_pipeline_seg{segment_idx}")
 
     
 def visualize_h5_file(h5_path, output_dir="debug_output", num_time_slices=32):

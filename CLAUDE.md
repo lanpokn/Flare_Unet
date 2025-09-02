@@ -14,23 +14,28 @@
 - **极性处理准则**: **1是正事件，非1都是负事件** (通用处理各种数据格式)
 - **时间一致性原则**: **固定时间间隔** (100ms/32bins) 确保训练测试泛化性
 
-## 关键工程决策：固定时间间隔
+## 关键工程决策：分段内存优化 + 固定时间间隔
 
-**问题**: 不同数据样本的时间长度不同，如果使用自适应时间间隔会导致：
+**问题1**: 不同数据样本的时间长度不同，如果使用自适应时间间隔会导致：
 - 训练和测试时每个bin代表不同的时间长度
 - 网络学到的时间模式无法泛化到新数据
 - 时间特征不一致，影响模型性能
 
-**解决方案**: **固定时间间隔编码**
-- **固定总时长**: 100ms (100,000微秒)
-- **固定bin数**: 32个 (每bin 3.125ms) - **2024-09-02更新: 统一为32bins**
-- **固定分辨率**: 无论原始数据多长，都映射到相同的时间网格
+**问题2**: 100ms大数据可能导致显存爆炸
+
+**解决方案**: **分段内存优化 + 固定时间间隔** - **2024-09-02升级**
+- **分段策略**: 100ms → 5×20ms段 (避免显存爆炸)
+- **可视化选择**: 默认可视化第2段 (10-30ms，segment_idx=1)
+- **固定分辨率**: 每20ms段 → 8个bins (每bin 2.5ms)
+- **内存优化**: 数据量减少到原来的~21% (20ms vs 100ms)
 - **训练一致性**: 保证所有样本具有相同的时间语义
 
-**实现**: `events_to_voxel(fixed_duration_us=100000, num_bins=32)`
+**实现**: `events_to_voxel(fixed_duration_us=20000, num_bins=8)` (段内)
 ```python
-# 不再使用: dt = (t_max - t_min) / num_bins  # 自适应间隔
-# 改为固定: dt = fixed_duration_us / num_bins  # 固定间隔
+# 分段提取: 100ms → 5×20ms
+segment_duration_us = 100000 / 5  # 20ms per segment
+# 段内编码: 20ms → 8 bins
+dt = segment_duration_us / 8  # 2.5ms per bin
 ```
 
 ## 环境配置
@@ -120,22 +125,30 @@ python src/data_processing/decode.py \
 - **同步可视化**: **同时输出events和voxel**可视化
 - **零依赖假设**: 自动处理event_utils导入和兼容性
 
-**核心功能** (全面升级):
-1. **Events原生3D时空可视化** - **2024-09-02新增**: 
-   - **原生3D时空散点图**: 使用event_utils的`plot_events`函数，真正显示events的(x,y,t)三维分布
-   - **8窗口3D时间序列**: 固定100ms分为8个时间窗口，每个窗口独立3D可视化
-   - **32张时间切片图像** (固定覆盖100ms事件流)
-   - 统计摘要图 (6面板综合分析)
-   
-2. **Voxel深度分析**:
-   - **32个时间bin完整展示** (与events时间窗口一致)
-   - 数据统计和分析图表
-   - 时间轮廓和稀疏性分析
-   
-3. **统一Pipeline可视化**:
-   - **visualize_events_and_voxel()**: 统一接口，同时生成events和voxel可视化
-   - **输入events 3D + 输出events 3D**: 同样时间间隔的对比可视化
-   - 编码器和解码器专用可视化
+**核心功能** - **2024-09-02完整6可视化架构**:
+
+## **完整6个可视化结果** (2×2+2架构):
+
+### **Events数据可视化** (输入+输出 × 3D+2D = 4个结果):
+1. **输入Events 3D时空可视化**: 
+   - 原生3D时空散点图 + 8窗口3D时间序列
+2. **输入Events 2D红蓝时序可视化**: 
+   - **8张2D时序图像** (红蓝极性显示，与3D相同时间间隔)
+3. **输出Events 3D时空可视化**: 
+   - 原生3D时空散点图 + 8窗口3D时间序列  
+4. **输出Events 2D红蓝时序可视化**: 
+   - **8张2D时序图像** (红蓝极性显示，与3D相同时间间隔)
+
+### **Voxel数据可视化** (输入+输出 = 2个结果):
+5. **输入Events→Voxel可视化**: 
+   - 32个时间bin展示 + 统计分析图
+6. **输出Events→Voxel(重编码)可视化**: 
+   - 32个时间bin展示 + 统计分析图
+
+### **核心特性**:
+- **时间间隔统一**: 所有可视化使用**相同的固定时间分割** (100ms/8窗口)
+- **红蓝极性显示**: 2D时序图像使用RdBu colormap (红=正事件，蓝=负事件)
+- **pipeline对比**: 输入和输出events使用完全相同的可视化参数
 
 **专业特性**:
 - **固定参数**: 消除多尺度选择复杂性 (固定32bins)
@@ -144,37 +157,74 @@ python src/data_processing/decode.py \
 - **格式自适应**: 自动转换数据格式
 - **错误容忍**: matplotlib兼容性问题自动fallback
 
-**使用接口** (更新):
+**使用接口** - **2024-09-02分段内存优化**:
 ```python
-# 统一events+voxel可视化 (推荐)
+# 完整6个可视化结果 (推荐) - 分段内存优化版本
+from src.data_processing.professional_visualizer import visualize_complete_pipeline
+visualize_complete_pipeline(
+    input_events=input_events_np,    # 原始输入events (100ms)
+    input_voxel=input_voxel_tensor,  # 编码后的voxel
+    output_events=output_events_np,  # 解码得到的events
+    output_voxel=output_voxel_tensor, # 重编码的voxel
+    sensor_size=(480, 640),
+    output_dir="debug_output",       # 统一输出目录
+    segment_idx=1                    # 可视化段索引: 1=10-30ms
+)
+
+# 分段参数说明:
+# segment_idx=0: 0-20ms
+# segment_idx=1: 10-30ms (默认)
+# segment_idx=2: 20-40ms
+# segment_idx=3: 30-50ms  
+# segment_idx=4: 40-60ms
+
+# 单独功能接口 (兼容性保持)
 from src.data_processing.professional_visualizer import visualize_events_and_voxel
 visualize_events_and_voxel(events_np, voxel_tensor, sensor_size, "debug_output", "pipeline")
-
-# 单独events可视化 (固定32切片)
-from src.data_processing.professional_visualizer import visualize_events
-visualize_events(events_np, sensor_size, "debug_output", "my_events", 32)
-
-# 单独voxel可视化 (固定100ms)
-from src.data_processing.professional_visualizer import visualize_voxel
-visualize_voxel(voxel_tensor, sensor_size, "debug_output", "my_voxel", 100)
 ```
 
-**输出结果** - **2024-09-02全面升级** (每次可视化生成，全部保存至 `debug_output/`):
+**测试脚本**:
+```bash
+# 运行分段内存优化的6可视化pipeline
+python test_6_visualizations.py
+```
 
-**Events原生3D可视化**:
-- **{name}_events_native_3d_spatiotemporal.png**: **原生events 3D时空可视化** (event_utils plot_events)
-- **{name}_events_3d_series/**: **8张3D时间窗口** (固定100ms/8窗口，每窗12.5ms)
-- **{name}_events_time_slices/**: **32张时间切片PNG** (完整时序演化)
-- **{name}_events_summary.png**: 6面板统计摘要 (包含极性分布分析)
+**输出结果** - **2024-09-02分段内存优化架构** (统一保存至 `debug_output/`):
 
-**Voxel分析可视化**:
-- **{name}_voxel_temporal_bins.png**: **32个Voxel时间bins** 
-- **{name}_voxel_analysis.png**: 详细分析图
+### **内存优化统计** (基于composed_00003_bg_flare.h5):
+- **原始数据**: 956,728 events (100ms)
+- **分段数据**: 200,949 input + 172,774 output events (20ms段)
+- **内存优化**: 数据量减少到原来的~21%
+- **显存友好**: 避免100ms大数据导致的显存爆炸
 
-**生成文件统计** (基于composed_00003_bg_flare.h5测试):
-- **总计生成**: 输入events (1 native 3D + 8个3D窗口 + 32张切片) + 输出events (1 native 3D + 8个3D窗口 + 32张切片) + voxel分析
-- **3D可视化文件**: 18个 (2个native + 2个8窗口目录)
-- **对比性**: 输入events和输出events使用**相同时间间隔**，便于直接对比
+### **详细文件结构** (Segment 1: 10-30ms):
+
+**1. 输入Events 3D (Segment 1)**:
+- `input_events_seg1_native_3d_spatiotemporal.png`: 20ms段3D时空散点图
+- `input_events_seg1_3d_series/`: 2张3D时间窗口 (20ms段内)
+
+**2. 输入Events 2D红蓝 (Segment 1)**:
+- `input_events_seg1_2d_temporal/`: **2张2D红蓝时序图** (20ms段内)
+
+**3. 输入Events→Voxel (Segment 1)**:
+- `input_voxel_seg1_temporal_bins.png`: 8个时间bin可视化 (20ms→8bins)
+- `input_voxel_seg1_analysis.png`: 统计分析图
+
+**4. 输出Events 3D (Segment 1)**:
+- `output_events_seg1_native_3d_spatiotemporal.png`: 20ms段3D时空散点图  
+- `output_events_seg1_3d_series/`: 2张3D时间窗口
+
+**5. 输出Events 2D红蓝 (Segment 1)**:
+- `output_events_seg1_2d_temporal/`: **2张2D红蓝时序图** (相同时间间隔)
+
+**6. 输出Events→Voxel (Segment 1)**:
+- `output_voxel_seg1_temporal_bins.png`: 8个时间bin可视化
+- `output_voxel_seg1_analysis.png`: 统计分析图
+
+**优化特性**: 
+- **内存友好**: 20ms段 vs 100ms全量，显存占用大幅降低
+- **时间一致性**: 输入和输出使用相同的20ms时间段 (10-30ms)
+- **分辨率保持**: 每20ms段仍有8个时间bins (2.5ms/bin)
 
 ### 4. 配置系统 (config/voxel_config.yaml)
 
@@ -201,14 +251,17 @@ visualize_voxel(voxel_tensor, sensor_size, "debug_output", "my_voxel", 100)
 - **时间分布**: 解码时随机时间戳仍落在正确的时间bin内
 - **极性保持**: 正负事件比例在编解码中保持一致
 
-### 全方位可视化验证 - **2024-09-02全面升级**
-- **18个原生3D时空图**: **输入events和输出events的真实3D(x,y,t)可视化**
-- **16个3D时间窗口**: encoder和decoder各8个时间窗口 (固定100ms/8窗口)
-- **64张时间切片**: encoder_events和decoder_events各32张切片
-- **专业工具**: 使用event_utils库的`plot_events`原生3D可视化函数
-- **固定时间间隔**: 输入和输出events使用**相同时间分割**，便于直接对比
-- **同步可视化**: events和voxel同时输出，pipeline全覆盖
-- **自动保存**: 所有图表自动保存至`debug_output/`目录
+### 全方位可视化验证 - **2024-09-02分段内存优化架构**
+- **完整6个可视化结果**: 输入events(3D+2D) + 输出events(3D+2D) + 输入voxel + 输出voxel
+- **内存优化**: 100ms → 20ms段，数据量减少到21%，避免显存爆炸
+- **4张2D红蓝时序图**: **输入和输出events的红蓝极性对比** (各2张，20ms段内)
+- **4个原生3D时空窗口**: 输入和输出events各2个3D时间窗口 (20ms段内)
+- **2个原生3D时空整体图**: 输入和输出events的20ms段3D时空散点图
+- **4个voxel分析图**: 输入和输出voxel的8个时间bin + 统计分析
+- **专业工具**: 使用event_utils的`plot_events`和`events_to_image`函数
+- **时间间隔统一**: **所有可视化使用相同的固定时间分割** (20ms/8bins)
+- **pipeline对比**: 输入→输出的Segment 1 (10-30ms) 可视化对比分析
+- **显存友好**: 避免100ms大数据处理，适合GPU训练环境
 
 ### Bug修复记录
 - ✅ 修复encoder.py和decode.py中的`debug_visualizer`导入错误
@@ -217,7 +270,12 @@ visualize_voxel(voxel_tensor, sensor_size, "debug_output", "my_voxel", 100)
 - ✅ 修复PyTorch `weights_only=True` 警告
 - ✅ 新增`visualize_events_and_voxel()` 统一接口
 - ✅ **新增原生events 3D时空可视化** (使用event_utils plot_events)
-- ✅ **新增固定时间间隔的3D窗口序列** (8窗口 × 12.5ms)
+- ✅ **新增固定时间间隔的3D窗口序列** (8窗口 × 2.5ms，20ms段内)
+- ✅ **新增2D红蓝时序可视化** (使用event_utils events_to_image)
+- ✅ **实现完整6可视化架构** (2×2+2: 输入/输出events的3D+2D + 输入/输出voxel)
+- ✅ **分段内存优化** (100ms → 5×20ms，选择10-30ms段可视化)
+- ✅ **统一输出目录** (所有可视化统一保存至debug_output)
+- ✅ **修复时间窗口计算** (20ms段内正确分为8份，每份2.5ms)
 
 ## 技术突破
 
