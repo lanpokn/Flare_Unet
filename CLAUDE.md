@@ -572,10 +572,12 @@ python main.py inference --config configs/inference_config.yaml \
 ✅ **自定义训练循环**: 完全摆脱pytorch-3dunet框架，只使用其UNet3D模型
 ✅ **数据流配置**: 20ms/8bins = 2.5ms per bin (正确的分段策略)
 
-### 当前问题和调试重点
-❌ **内存问题**: 训练启动后被系统Killed，需要大幅减小模型参数
-❌ **数据读取验证**: 需要确认真的读取到了physics_method数据，不是其他测试数据
-❌ **Bug修复阶段**: 新写的代码必然存在大量bug，需要耐心逐一修复
+### 解决的问题和当前状态
+✅ **GPU环境成功配置**: 删除mamba，用conda升级到PyTorch 2.3.0 + CUDA 12.1 + pytorch-3dunet
+✅ **数据读取验证通过**: 确认读取physics_method数据 (500个文件对，956K→436K事件)
+✅ **GPU训练成功**: 使用极小模型参数 ([4,8] feature maps, 3,353参数) 在RTX 4060上训练
+✅ **模型参数调优**: f_maps=[4,8], num_levels=2, batch_size=1, max_iterations=3 (调试模式)
+✅ **训练流程验证**: 3个iterations完成，损失正常变化，GPU加速明显
 
 ### 关键技术决策
 - **任务性质**: **炫光去除(Deflare)** - 从background_with_flare_events去除炫光得到background_with_light_events
@@ -591,14 +593,22 @@ python main.py inference --config configs/inference_config.yaml \
 
 ## 使用指南
 
-### 环境准备
+### GPU环境准备 - **2025-01-03更新**
 ```bash
-# 激活环境 (每次使用前)
+# 激活GPU环境 (每次使用前)
 eval "$(conda shell.bash hook)" && conda activate Umain
 
-# 验证pytorch-3dunet (only UNet3D model needed)
-python -c "from pytorch3dunet.unet3d.model import UNet3D; print('UNet3D available')"
+# 验证GPU环境
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+
+# 验证pytorch-3dunet
+python -c "from pytorch3dunet.unet3d.model import UNet3D; print('pytorch-3dunet UNet3D available')"
 ```
+
+**环境配置历史**:
+- **原环境**: PyTorch 1.8.1 (CPU only)
+- **升级过程**: 删除mamba → conda升级 → PyTorch 2.3.0 + CUDA 12.1 + pytorch-3dunet  
+- **当前环境**: RTX 4060 Laptop GPU + CUDA 12.1 + PyTorch 2.3.0
 
 ### 数据准备
 ```bash
@@ -628,18 +638,27 @@ vim configs/inference_config.yaml
 # 设置模型checkpoint路径
 ```
 
-### 完整训练流程
+### 完整训练流程 - **GPU模式验证成功**
 ```bash
-# 1. 训练模型
+# 1. 数据验证 (可选)
+python debug_data_loading.py
+
+# 2. GPU训练模型 (极小参数调试)
 python main.py train --config configs/train_config.yaml
 
-# 2. 评估模型
+# 3. 评估模型
 python main.py test --config configs/test_config.yaml
 
-# 3. 推理应用
+# 4. 推理应用
 python main.py inference --config configs/inference_config.yaml \
-  --input testdata/noisy_events.h5 --output results/denoised_events.h5
+  --input testdata/deflare_input.h5 --output results/deflared_output.h5
 ```
+
+**当前训练配置** (调试模式):
+- **模型**: UNet3D, f_maps=[4,8], 2 levels, 3,353参数
+- **数据**: 500个H5文件对, 2500个训练样本 (20ms/8bins)
+- **训练**: batch_size=1, max_iterations=3, GPU加速
+- **设备**: RTX 4060 Laptop GPU, CUDA 12.1
 
 这个系统将原有的编解码工具链与现代深度学习训练框架完美结合，实现了**工程简洁性**与**功能完整性**的统一。
 

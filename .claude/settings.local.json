@@ -13,7 +13,9 @@
       "Bash(python:*)",
       "Bash(tree:*)",
       "Bash(find:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(mamba run:*)",
+      "Bash(conda:*)"
     ],
     "deny": []
   }
