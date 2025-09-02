@@ -320,6 +320,13 @@ class EventVoxelTrainer:
             # 早期停止检查（基于迭代数）
             if max_iters and self.current_iteration >= max_iters:
                 self.logger.info(f"Training stopped: reached max iterations {max_iters}")
+                # 在训练结束前保存final checkpoint
+                val_metrics = self.validate_epoch()
+                self.logger.info(f"Final validation | Train Loss: {train_metrics['loss']:.6f} | Val Loss: {val_metrics['loss']:.6f}")
+                is_best = val_metrics['loss'] < self.best_val_loss
+                if is_best:
+                    self.best_val_loss = val_metrics['loss']
+                self.save_checkpoint(is_best=is_best)
                 break
         
         # 训练结束

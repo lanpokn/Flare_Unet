@@ -586,10 +586,22 @@ python main.py inference --config configs/inference_config.yaml \
 - **数据特点**: 目前数据集不分train/test/inference，全部都是训练数据
 
 ### 下一步调试计划
-1. 大幅减小模型参数 (f_maps, num_levels等)
-2. 验证数据读取策略确实读取了physics_method数据
-3. 逐步修复训练过程中的bugs
-4. 确保20ms事件数据正确voxel化为8段
+1. ✅ 大幅减小模型参数 (f_maps, num_levels等)
+2. ✅ 验证数据读取策略确实读取了physics_method数据
+3. ✅ 逐步修复训练过程中的bugs
+4. ✅ 确保20ms事件数据正确voxel化为8段
+5. **待测试**: 断点续存能力验证
+
+### 待完成的重要测试
+🔄 **断点续存测试** (checkpoint resume功能):
+- **问题**: 训练器需要验证checkpoint保存和加载功能是否正常
+- **测试步骤**: 
+  1. 运行训练保存checkpoint (需要修复在max_iterations时的checkpoint保存逻辑)
+  2. 配置resume参数从checkpoint继续训练
+  3. 验证模型权重、优化器状态、iteration计数等恢复正确
+- **状态**: 发现bug - 训练在max_iterations结束时不触发checkpoint保存
+- **修复**: 已修改custom_trainer.py在训练结束前强制保存final checkpoint
+- **下次验证**: 运行完整测试确保resume功能正常工作
 
 ## 使用指南
 

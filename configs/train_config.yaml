@@ -68,12 +68,12 @@ trainer:
   checkpoint_dir: checkpoints/event_voxel_deflare
   resume: null              # Path to resume from checkpoint (null = start from scratch)
   
-  # Training duration (极短用于调试)
+  # Training duration (断点测试)
   max_num_epochs: 1         # 只训练1个epoch
-  max_num_iterations: 3     # 只训练3个iteration调试
+  max_num_iterations: 6     # 6个iteration确保触发验证
   
   # Validation and logging
-  validate_after_iters: 2   # 每2个iteration验证一次
+  validate_after_iters: 3   # 每3个iteration验证一次 (第3和第6次)
   log_after_iters: 1        # 每个iteration都记录日志
   max_num_workers: 0        # 单线程
   
