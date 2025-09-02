@@ -32,7 +32,7 @@ def load_voxel(voxel_path):
         voxel: PyTorch tensor (B, H, W)
     """
     if voxel_path.endswith('.pt'):
-        voxel = torch.load(voxel_path)
+        voxel = torch.load(voxel_path, weights_only=True)
     elif voxel_path.endswith('.npy'):
         voxel = torch.from_numpy(np.load(voxel_path))
     else:
@@ -178,15 +178,13 @@ def main():
         print(f"Running debug mode, saving visualizations to: {debug_dir}")
         
         try:
-            from .debug_visualizer import EventsVoxelVisualizer
+            from .professional_visualizer import visualize_events_and_voxel
         except ImportError:
             # Fallback for direct script execution
-            from debug_visualizer import EventsVoxelVisualizer
-        visualizer = EventsVoxelVisualizer(output_dir=debug_dir, dpi=config['debug']['dpi'])
+            from professional_visualizer import visualize_events_and_voxel
         
-        # Create comprehensive visualizations for decoded events
-        visualizer.visualize_decoded_events(voxel, events_np, sensor_size)
-        visualizer.print_summary()
+        # Create comprehensive visualizations - both voxel and decoded events with FIXED 100ms/32bins
+        visualize_events_and_voxel(events_np, voxel, sensor_size, debug_dir, "decoder")
 
 if __name__ == '__main__':
     main()

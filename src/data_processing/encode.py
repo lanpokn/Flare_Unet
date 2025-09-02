@@ -160,16 +160,13 @@ def main():
         print(f"Running debug mode, saving visualizations to: {debug_dir}")
         
         try:
-            from .debug_visualizer import EventsVoxelVisualizer
+            from .professional_visualizer import visualize_events_and_voxel
         except ImportError:
             # Fallback for direct script execution
-            from debug_visualizer import EventsVoxelVisualizer
-        visualizer = EventsVoxelVisualizer(output_dir=debug_dir, dpi=config['debug']['dpi'])
+            from professional_visualizer import visualize_events_and_voxel
         
-        # Create comprehensive visualizations
-        visualizer.visualize_original_events(events_np, sensor_size)
-        visualizer.visualize_voxel_grid(voxel)
-        visualizer.print_summary()
+        # Create comprehensive visualizations - both events and voxel with FIXED 100ms/32bins
+        visualize_events_and_voxel(events_np, voxel, sensor_size, debug_dir, "encoder")
 
 if __name__ == '__main__':
     main()

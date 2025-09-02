@@ -52,19 +52,19 @@ class ProfessionalEventVisualizer:
         self.dpi = dpi
         
     def visualize_events_comprehensive(self, events_np, sensor_size=(480, 640), 
-                                     name_prefix="events", num_time_slices=16):
+                                     name_prefix="events", num_time_slices=32):
         """
-        Comprehensive events visualization using event_utils professional tools.
+        Comprehensive events visualization using FIXED 100ms/32bins window.
         
         Args:
             events_np: Events as numpy array (N, 4) [t, x, y, p] 
             sensor_size: Sensor dimensions (H, W)
             name_prefix: Prefix for output files
-            num_time_slices: Number of time slice visualizations (16-32)
+            num_time_slices: FIXED at 32 for 100ms window consistency
             
         Generates:
             - {name_prefix}_spatiotemporal_3d.png: Professional 3D plot
-            - {name_prefix}_time_slices/: Directory with time slice images
+            - {name_prefix}_time_slices/: Directory with 32 time slice images
             - {name_prefix}_summary.png: Statistical summary
         """
         if len(events_np) == 0:
@@ -79,16 +79,17 @@ class ProfessionalEventVisualizer:
         # Convert to event_utils expected format
         xs, ys, ts, ps = x.astype(np.int32), y.astype(np.int32), t.astype(np.int64), p.astype(np.int32)
         
-        # 1. Professional 3D spatiotemporal visualization
-        self._create_3d_spatiotemporal_plot(xs, ys, ts, ps, sensor_size, name_prefix)
+        # 1. Professional 3D spatiotemporal visualization (event_utils native)
+        self._create_native_3d_events_plot(xs, ys, ts, ps, sensor_size, name_prefix)
         
-        # 2. Time slice analysis (16-32 slices)
+        # 2. Native 3D spatiotemporal series (with FIXED time intervals)
+        self._create_native_3d_events_series(xs, ys, ts, ps, sensor_size, name_prefix, num_windows=8)
+        
+        # 3. Time slice analysis (32 slices)
         self._create_time_slices(xs, ys, ts, ps, sensor_size, name_prefix, num_time_slices)
         
-        # 3. Multi-resolution time slices (8, 16, 32)
-        for slice_count in [8, 16, 32]:
-            if slice_count != num_time_slices:  # Don't duplicate the main slices
-                self._create_time_slices(xs, ys, ts, ps, sensor_size, f"{name_prefix}_{slice_count}slices", slice_count)
+        # REMOVED: Multi-resolution slices - use FIXED 32 slices only
+        # Follows Linus principle: "消除特殊情况"
         
         # 4. Summary statistics
         self._create_events_summary(events_np, sensor_size, name_prefix)
@@ -202,21 +203,23 @@ class ProfessionalEventVisualizer:
         # Use event_utils sliding window visualization
         plot_events_sliding(xs, ys, ts, ps, args, frames=[], frame_ts=[])
         
-    def _create_3d_spatiotemporal_plot(self, xs, ys, ts, ps, sensor_size, name_prefix):
-        """Create professional 3D spatiotemporal plot using event_utils"""
-        output_path = self.output_dir / f"{name_prefix}_spatiotemporal_3d.png"
+    def _create_native_3d_events_plot(self, xs, ys, ts, ps, sensor_size, name_prefix):
+        """Create native 3D spatiotemporal events plot using event_utils plot_events"""
+        output_path = self.output_dir / f"{name_prefix}_native_3d_spatiotemporal.png"
         
         # Sample events for performance and avoid scatter size issues
-        sample_size = min(20000, len(xs))
+        sample_size = min(50000, len(xs))
         if sample_size > 0:
             indices = np.random.choice(len(xs), sample_size, replace=False)
             sample_xs, sample_ys, sample_ts, sample_ps = xs[indices], ys[indices], ts[indices], ps[indices]
             
-            # Use event_utils professional 3D plotting
+            print(f"Creating native 3D spatiotemporal plot for {name_prefix} ({sample_size:,} events)")
+            
+            # Use event_utils native plot_events for true 3D spatiotemporal visualization
             plot_events(sample_xs, sample_ys, sample_ts, sample_ps, 
                        save_path=str(output_path),
                        num_show=-1,  # Show all sampled events
-                       event_size=1,
+                       event_size=2,
                        elev=20, 
                        azim=45,
                        show_events=True,
@@ -224,6 +227,57 @@ class ProfessionalEventVisualizer:
                        show_plot=False,
                        img_size=sensor_size,
                        show_axes=True)
+
+    def _create_native_3d_events_series(self, xs, ys, ts, ps, sensor_size, name_prefix, num_windows=8):
+        """Create series of 3D spatiotemporal plots with fixed time intervals"""
+        series_dir = self.output_dir / f"{name_prefix}_3d_series"
+        series_dir.mkdir(exist_ok=True)
+        
+        if len(xs) == 0:
+            return
+            
+        # Use FIXED time intervals (same as voxel bins)
+        t_min, t_max = ts.min(), ts.max()
+        # Fixed 100ms duration divided into windows
+        fixed_duration = 100000  # 100ms in microseconds
+        window_duration = fixed_duration / num_windows
+        
+        print(f"Creating {num_windows} native 3D spatiotemporal windows for {name_prefix}")
+        
+        for i in range(num_windows):
+            t_start = t_min + i * window_duration
+            t_end = t_start + window_duration
+            
+            # Select events in this time window
+            mask = (ts >= t_start) & (ts < t_end)
+            if not np.any(mask):
+                continue
+                
+            window_xs, window_ys, window_ts, window_ps = xs[mask], ys[mask], ts[mask], ps[mask]
+            
+            # Sample for performance
+            sample_size = min(20000, len(window_xs))
+            if sample_size > 0:
+                indices = np.random.choice(len(window_xs), sample_size, replace=False)
+                sample_xs = window_xs[indices]
+                sample_ys = window_ys[indices] 
+                sample_ts = window_ts[indices]
+                sample_ps = window_ps[indices]
+                
+                output_path = series_dir / f"window_{i:02d}.png"
+                
+                # Use event_utils native plot_events
+                plot_events(sample_xs, sample_ys, sample_ts, sample_ps,
+                           save_path=str(output_path),
+                           num_show=-1,
+                           event_size=2,
+                           elev=20,
+                           azim=45,
+                           show_events=True,
+                           show_frames=False,
+                           show_plot=False,
+                           img_size=sensor_size,
+                           show_axes=True)
                    
     def _create_time_slices(self, xs, ys, ts, ps, sensor_size, name_prefix, num_slices):
         """Create time slice visualizations"""
@@ -520,8 +574,8 @@ Active pixels: {np.mean(bin_events):.0f} ± {np.std(bin_events):.0f}"""
 
 # Convenience functions for direct usage
 def visualize_events(events_np, sensor_size=(480, 640), output_dir="debug_output", 
-                   name="events", num_time_slices=16):
-    """Convenience function for events visualization"""
+                   name="events", num_time_slices=32):
+    """Convenience function for events visualization - FIXED 32 slices"""
     viz = ProfessionalEventVisualizer(output_dir)
     viz.visualize_events_comprehensive(events_np, sensor_size, name, num_time_slices)
     viz.print_summary(name)
@@ -529,9 +583,20 @@ def visualize_events(events_np, sensor_size=(480, 640), output_dir="debug_output
     
 def visualize_voxel(voxel_tensor, sensor_size=(480, 640), output_dir="debug_output",
                    name="voxel", duration_ms=100):
-    """Convenience function for voxel visualization"""
+    """Convenience function for voxel visualization - FIXED 100ms duration"""
     viz = ProfessionalEventVisualizer(output_dir)
     viz.visualize_voxel_comprehensive(voxel_tensor, sensor_size, name, duration_ms)
+    viz.print_summary(name)
+
+
+def visualize_events_and_voxel(events_np, voxel_tensor, sensor_size=(480, 640), 
+                              output_dir="debug_output", name="pipeline"):
+    """Unified function for simultaneous events+voxel visualization"""
+    viz = ProfessionalEventVisualizer(output_dir)
+    # Events visualization with FIXED 32 slices
+    viz.visualize_events_comprehensive(events_np, sensor_size, f"{name}_events", 32)
+    # Voxel visualization with FIXED 100ms
+    viz.visualize_voxel_comprehensive(voxel_tensor, sensor_size, f"{name}_voxel", 100)
     viz.print_summary(name)
 
     
