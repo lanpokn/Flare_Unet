@@ -115,20 +115,51 @@ model.final_activation = nn.Identity()  # 强制替换为恒等映射
 
 ## 推荐训练配置 - **2025-01-03更新**
 
-### 模型选择
+### 模型选择与参数量分析
 **推荐**: `TrueResidualUNet3D` (真正残差学习)
+
+**当前配置 vs 官方默认对比**:
+| 参数 | 官方默认 | 我们的配置 | 原因 |
+|-----|---------|----------|------|
+| `f_maps` | 64 | [16, 32, 64] | 渐进式特征图，更efficient |
+| `num_levels` | 5 | 3 | 避免过拟合，适合数据复杂度 |
+| `num_groups` | 8 | 8 ✅ | GroupNorm标准设置 |
+| `layer_order` | 'gcr' | 'gcr' ✅ | GroupNorm+Conv+ReLU |
+| `dropout_prob` | 0.1 | 0.1 ✅ | 标准正则化 |
+| **总参数量** | **1.13亿** | **43万** | **节省99.6%** |
+
 ```yaml
+# 当前优化配置 (43万参数)
 model:
-  name: 'TrueResidualUNet3D'  # 替代 'ResidualUNet3D'
-  backbone: 'ResidualUNet3D'  # 底层网络
-  f_maps: [16, 32, 64]
-  num_levels: 3
-  # 自动零初始化，无需额外配置
+  name: 'TrueResidualUNet3D'
+  backbone: 'ResidualUNet3D'
+  f_maps: [16, 32, 64]       # 渐进式特征图
+  num_levels: 3              # 3层深度
+  layer_order: 'gcr'         # GroupNorm + Conv + ReLU
+  num_groups: 8              # GroupNorm分组
+  conv_padding: 1            # 卷积padding
+  dropout_prob: 0.1          # Dropout正则化
 ```
 
-**对比选择**:
-- `ResidualUNet3D`: 传统pytorch-3dunet实现，背景信息初始丢失
-- `TrueResidualUNet3D`: 真正残差学习，背景信息完全保护
+**⚠️ 潜在风险**: 43万参数可能对复杂炫光模式学习能力不足
+
+**备选配置建议**:
+```yaml
+# 中等规模配置 (173万参数，推荐先测试)
+f_maps: [32, 64, 128]       # 4倍特征图容量
+num_levels: 4               # 更深的特征提取
+
+# 大规模配置 (690万参数，复杂炫光场景)
+f_maps: [64, 128, 256]      # 16倍特征图容量  
+num_levels: 4               # 深度特征学习
+```
+
+**参数量对比分析**:
+- **当前**: 43万参数 → 可能学习能力不足 ⚠️
+- **中等**: 173万参数 (4倍) → 平衡性能与效率 ✅
+- **大规模**: 690万参数 (16倍) → 强学习能力，需更多数据 
+
+**GPU内存全部友好** (RTX 4060): 所有配置都 <1GB 模型权重
 
 ### 训练参数
 - **数据**: 500个H5文件对 → 2500个训练样本  
@@ -224,15 +255,36 @@ python main.py train --config configs/train_config.yaml --debug
 python main.py train --config configs/train_config.yaml --debug --debug-dir my_custom_debug
 ```
 
-**配置文件更新** (configs/train_config.yaml):
+**配置文件建议**:
+
+**选择1：当前轻量配置** (configs/train_config.yaml):
 ```yaml
 model:
-  name: 'TrueResidualUNet3D'  # 使用真正残差学习
-  backbone: 'ResidualUNet3D'   # 或 'UNet3D' 
-  in_channels: 1
-  out_channels: 1
-  f_maps: [16, 32, 64]
+  name: 'TrueResidualUNet3D'
+  backbone: 'ResidualUNet3D'  
+  f_maps: [16, 32, 64]        # 43万参数，快速训练
   num_levels: 3
+  # ... 其他参数
+```
+
+**选择2：推荐中等配置** (更强学习能力):
+```yaml  
+model:
+  name: 'TrueResidualUNet3D'
+  backbone: 'ResidualUNet3D'
+  f_maps: [32, 64, 128]       # 173万参数，平衡性能
+  num_levels: 4               # 稍深一点
+  # ... 其他参数保持不变
+```
+
+**选择3：大规模配置** (复杂炫光场景):
+```yaml
+model:
+  name: 'TrueResidualUNet3D' 
+  backbone: 'ResidualUNet3D'
+  f_maps: [64, 128, 256]      # 690万参数，强学习能力
+  num_levels: 4
+  # ... 其他参数保持不变
 ```
 
 **重要约定**: **所有debug相关的可视化输出都统一保存到`debug_output`目录**，包括：

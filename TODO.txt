@@ -29,3 +29,6 @@ checkpoint, debug模式， 参数与显存的关系，阅读记忆找问题. val
 还要自己跑，似乎有奇怪的bug 输出全是1？3DUnet给我的初印象很烂，还是考虑换restormer吧。
  我们的voxel真值不是应该超出0-1范围吗？它的物理意义是有多少个事件，如果sigmoid=true，不是会导致结果永远学不到真实   │
 │   情况？这个bug有希望修复吗？        
+
+  f_maps: [32, 64, 128]        # 特征图通道数 (3层encoder: 32→64→128)
+  num_levels: 3               # UNet层数 (与EventZoom一致)
