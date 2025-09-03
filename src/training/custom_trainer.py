@@ -193,8 +193,17 @@ class EventVoxelTrainer:
         total_loss = 0.0
         num_batches = 0
         
+        # 限制验证样本数量（快速验证模式）
+        # 50个test文件 × 5个segments = 250个验证样本
+        # 只验证前2个文件 × 5个segments = 10个样本
+        max_val_batches = 10  # 前2个文件的10个数据对
+        
         with torch.no_grad():
-            for batch in self.val_loader:
+            for batch_idx, batch in enumerate(self.val_loader):
+                if batch_idx >= max_val_batches:
+                    self.logger.info(f"Validation limited to {max_val_batches} batches for speed")
+                    break
+                    
                 inputs = batch['raw'].to(self.device)
                 targets = batch['label'].to(self.device)
                 

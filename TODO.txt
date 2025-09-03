@@ -24,3 +24,6 @@ voxel越小越精确，但是速度越慢，越大越快，但是频闪信息，
   3. 分段策略: 100ms events → 5×20ms segments → 8 bins voxels每段
 
   让我重新设计，创建自定义训练循环而不依赖pytorch-3dunet的训练框架：
+
+checkpoint, debug模式， 参数与显存的关系，阅读记忆找问题. validate有问题？validate目前只是在训练集里验证，很粗糙，后续做专门的validate集合
+还要自己跑，似乎有奇怪的bug

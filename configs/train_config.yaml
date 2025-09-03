@@ -6,11 +6,11 @@ loaders:
   # Real deflare dataset paths (WSL format)
   train_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events"
   train_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events"
-  val_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events"
-  val_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events"
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events_test"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events_test"
   
-  # DataLoader parameters (极小参数用于测试)
-  batch_size: 1           # 单样本batch
+  # DataLoader parameters
+  batch_size: 1           # 单样本batch (避免显存爆炸)
   num_workers: 0          # 单线程避免并发问题
   
   # Event-Voxel conversion parameters  
@@ -25,18 +25,18 @@ loaders:
 # Dataset-specific configuration (HDF5Dataset parameters)
 # Note: Our test data is already in (8, 480, 640) format - no additional processing needed
 
-# 3D U-Net model configuration (ULTRA-MINIMAL for debugging)
+# 3D U-Net model configuration
 model:
   name: UNet3D              # Standard 3D U-Net
   # Input/output channels
   in_channels: 1            # Single channel input (voxel grid)
   out_channels: 1           # Single channel output (deflared voxel)
   
-  # Architecture parameters (ULTRA-REDUCED for debugging)
+  # Architecture parameters (小参数避免显存爆炸)
   f_maps: [4, 8]            # 极小特征图 (2层: 4->8)
   layer_order: gcr          # Group normalization + Conv + ReLU
-  num_groups: 1             # 最小组数 (1 instead of 2) 
-  num_levels: 2             # 最小层数 (至少需要2层)
+  num_groups: 1             # 最小组数 (避免显存问题) 
+  num_levels: 2             # 最小层数 (避免显存问题)
   final_sigmoid: false      # No sigmoid for MSE regression loss
   
   # Advanced options (minimal)
@@ -62,20 +62,20 @@ lr_scheduler:
   milestones: [10, 20, 30]  # Epochs to reduce LR
   gamma: 0.2                # LR reduction factor
 
-# Training process configuration (ULTRA-MINIMAL for debugging)
+# Training process configuration
 trainer:
   # Checkpointing
   checkpoint_dir: checkpoints/event_voxel_deflare
   resume: null              # Path to resume from checkpoint (null = start from scratch)
   
-  # Training duration (断点测试)
-  max_num_epochs: 1         # 只训练1个epoch
-  max_num_iterations: 6     # 6个iteration确保触发验证
+  # Training duration
+  max_num_epochs: 50        # 正常训练50个epochs
+  max_num_iterations: null  # 无iteration限制，按epoch训练
   
   # Validation and logging
-  validate_after_iters: 3   # 每3个iteration验证一次 (第3和第6次)
-  log_after_iters: 1        # 每个iteration都记录日志
-  max_num_workers: 0        # 单线程
+  validate_after_iters: 500  # 每500个iteration验证一次
+  log_after_iters: 100       # 每100个iteration记录日志
+  max_num_workers: 0         # 单线程避免并发问题
   
   # Early stopping (optional)
   # eval_score_higher_is_better: false  # For loss-based metrics (MSE, L1)

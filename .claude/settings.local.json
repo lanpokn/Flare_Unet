@@ -15,7 +15,8 @@
       "Bash(find:*)",
       "Bash(mkdir:*)",
       "Bash(mamba run:*)",
-      "Bash(conda:*)"
+      "Bash(conda:*)",
+      "Bash(pkill:*)"
     ],
     "deny": []
   }
