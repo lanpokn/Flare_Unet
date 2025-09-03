@@ -89,6 +89,30 @@ nn.init.zeros_(last_conv.bias)
 - 初始相对差异: **0.000%** ✅ (vs 148.7% ❌)
 - 梯度流验证: 最后层梯度范数2.3，训练正常
 
+### 3. pytorch-3dunet激活函数问题的完整解决方案 - **关键技术细节**
+
+**问题根源**:
+```python
+# pytorch-3dunet的激活函数设计缺陷
+final_sigmoid=False → Softmax(dim=1) → 单通道时输出全1 ❌
+final_sigmoid=True  → Sigmoid()     → 输出限制在[0,1] ❌
+```
+
+**为什么需要实数域(R)输出**:
+1. **Voxel语义**: 正负事件累积，值域为整个实数轴 `(-∞, +∞)`
+2. **残差学习**: 需要学习 `residual ≈ -flare_noise`，必须支持负值
+3. **数值精度**: Sigmoid[0,1]压缩破坏voxel的数值含义
+
+**我们的解决方案**:
+```python
+# 巧妙绕过pytorch-3dunet的限制:
+final_sigmoid=True           # 避免Softmax(dim=1)的bug
+model.final_activation = nn.Identity()  # 强制替换为恒等映射
+# 结果: 输出域 = R，支持任意实数值
+```
+
+**实现位置**: `src/training/training_factory.py:68-75`
+
 ## 推荐训练配置 - **2025-01-03更新**
 
 ### 模型选择

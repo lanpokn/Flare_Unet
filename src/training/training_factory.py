@@ -110,6 +110,10 @@ class TrainingFactory:
                     out_channels=model_config['out_channels'],
                     f_maps=model_config.get('f_maps', [16, 32, 64]),
                     num_levels=model_config.get('num_levels', 3),
+                    layer_order=model_config.get('layer_order', 'gcr'),
+                    num_groups=model_config.get('num_groups', 8),
+                    conv_padding=model_config.get('conv_padding', 1),
+                    dropout_prob=model_config.get('dropout_prob', 0.1),
                     backbone=model_config.get('backbone', 'ResidualUNet3D')
                 )
                 

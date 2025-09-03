@@ -25,23 +25,30 @@ loaders:
 # Dataset-specific configuration (HDF5Dataset parameters)
 # Note: Our test data is already in (8, 480, 640) format - no additional processing needed
 
-# 3D Residual U-Net model configuration
+# 真正残差学习模型配置 - 2025-01-03 重要更新
 model:
-  name: ResidualUNet3D      # Residual 3D U-Net for deflare (better for residual learning)
+  name: TrueResidualUNet3D  # ✅ 使用真正残差学习 (解决背景丢失问题)
+  backbone: ResidualUNet3D  # 底层网络类型
+  
   # Input/output channels
   in_channels: 1            # Single channel input (voxel grid)
   out_channels: 1           # Single channel output (deflared voxel)
   
-  # Architecture parameters (合理的最小配置)
-  f_maps: [16, 32, 64]      # 合理的特征图 (3层: 16->32->64)
+  # Architecture parameters (全部传递给TrueResidualUNet3D)
+  f_maps: [16, 32, 64]      # 特征图数量
+  num_levels: 3             # 网络深度  
   layer_order: gcr          # Group normalization + Conv + ReLU
-  num_groups: 8             # 标准组数
-  num_levels: 3             # 3层应该足够了
-  final_sigmoid: true      # 强制设为true，代码中会替换为Identity
+  num_groups: 8             # GroupNorm分组数 (重要参数!)
+  conv_padding: 1           # 卷积padding
+  dropout_prob: 0.1         # Dropout概率
   
-  # Advanced options (minimal)
-  conv_kernel_size: 3       # Convolution kernel size
-  pool_kernel_size: 2       # Pooling kernel size
+  # 注意: final_sigmoid在TrueResidualUNet3D中硬编码为False，然后替换为Identity()
+  
+  # 真正残差学习的关键优势:
+  # 1. 零初始化: 初始完美恒等映射 (output = input + 0)
+  # 2. 背景保护: 100%保持背景信息，专注学习炫光去除
+  # 3. 稳定训练: 从理想状态开始，梯度流畅
+  # 4. 数值域: 支持实数域输出 (-∞, +∞)，无激活函数限制
 
 # Loss function configuration
 loss:
@@ -73,7 +80,7 @@ trainer:
   max_num_iterations: null  # 无iteration限制，按epoch训练
   
   # Validation and logging
-  validate_after_iters: 1250  # 每1250个iteration验证一次 (快速反馈)
+  validate_after_iters: 2  # 每1250个iteration验证一次 (快速反馈)
   log_after_iters: 250       # 每1个iteration记录日志到tensorboard
   max_num_workers: 0         # 单线程避免并发问题
   

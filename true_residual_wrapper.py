@@ -21,7 +21,12 @@ class TrueResidualUNet3D(nn.Module):
                  out_channels=1, 
                  f_maps=[16, 32, 64],
                  num_levels=3,
-                 backbone='ResidualUNet3D'):
+                 backbone='ResidualUNet3D',
+                 layer_order='gcr',
+                 num_groups=8,
+                 conv_padding=1,
+                 dropout_prob=0.1,
+                 **kwargs):
         """
         Args:
             backbone: 'ResidualUNet3D' or 'UNet3D'
@@ -34,7 +39,12 @@ class TrueResidualUNet3D(nn.Module):
                 out_channels=out_channels,
                 f_maps=f_maps,
                 num_levels=num_levels,
-                final_sigmoid=False  # 我们要学习残差，可以是任意值
+                layer_order=layer_order,
+                num_groups=num_groups,
+                conv_padding=conv_padding,
+                dropout_prob=dropout_prob,
+                final_sigmoid=False,  # 我们要学习残差，可以是任意值
+                **kwargs
             )
         elif backbone == 'UNet3D':
             self.backbone = UNet3D(
@@ -42,7 +52,12 @@ class TrueResidualUNet3D(nn.Module):
                 out_channels=out_channels,
                 f_maps=f_maps,
                 num_levels=num_levels,
-                final_sigmoid=False
+                layer_order=layer_order,
+                num_groups=num_groups,
+                conv_padding=conv_padding,
+                dropout_prob=dropout_prob,
+                final_sigmoid=False,
+                **kwargs
             )
         else:
             raise ValueError(f"Unknown backbone: {backbone}")
