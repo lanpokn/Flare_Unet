@@ -73,8 +73,8 @@ trainer:
   max_num_iterations: null  # 无iteration限制，按epoch训练
   
   # Validation and logging
-  validate_after_iters: 500  # 每500个iteration验证一次
-  log_after_iters: 100       # 每100个iteration记录日志
+  validate_after_iters: 2  # 每2个iteration验证一次 (快速反馈)
+  log_after_iters: 1       # 每1个iteration记录日志到tensorboard
   max_num_workers: 0         # 单线程避免并发问题
   
   # Early stopping (optional)

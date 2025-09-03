@@ -14,6 +14,7 @@ from pathlib import Path
 import time
 from typing import Dict, Any, Optional
 import json
+from tqdm import tqdm
 
 class EventVoxelTrainer:
     """
@@ -142,7 +143,16 @@ class EventVoxelTrainer:
         total_loss = 0.0
         num_batches = 0
         
-        for batch_idx, batch in enumerate(self.train_loader):
+        # 创建tqdm进度条
+        progress_bar = tqdm(
+            enumerate(self.train_loader), 
+            total=len(self.train_loader),
+            desc=f"Epoch {self.current_epoch + 1}",
+            leave=False,
+            ncols=100
+        )
+        
+        for batch_idx, batch in progress_bar:
             # 数据移动到设备
             inputs = batch['raw'].to(self.device)      # (B, 1, 8, H, W) 
             targets = batch['label'].to(self.device)   # (B, 1, 8, H, W)
@@ -163,27 +173,57 @@ class EventVoxelTrainer:
             num_batches += 1
             self.current_iteration += 1
             
-            # 定期日志
+            # 更新进度条显示
+            avg_loss_so_far = total_loss / num_batches
+            progress_bar.set_postfix({
+                'Loss': f'{loss.item():.4f}',
+                'Avg': f'{avg_loss_so_far:.4f}',
+                'LR': f'{self.optimizer.param_groups[0]["lr"]:.2e}'
+            })
+            
+            # Tensorboard记录
+            if self.writer:
+                self.writer.add_scalar('Loss/Train_Batch', loss.item(), self.current_iteration)
+                self.writer.add_scalar('LR', self.optimizer.param_groups[0]['lr'], self.current_iteration)
+            
+            # 检查是否需要验证 (每N个iteration)
             trainer_config = self.config['trainer']
-            if self.current_iteration % trainer_config.get('log_after_iters', 10) == 0:
-                self.logger.info(
-                    f"Epoch {self.current_epoch:3d} | "
-                    f"Batch {batch_idx:3d}/{len(self.train_loader)} | "
-                    f"Loss: {loss.item():.6f} | "
-                    f"LR: {self.optimizer.param_groups[0]['lr']:.2e}"
-                )
+            validate_after_iters = trainer_config.get('validate_after_iters', 100)
+            
+            if self.current_iteration % validate_after_iters == 0:
+                # 暂停训练进度条，进行验证
+                progress_bar.set_description(f"Epoch {self.current_epoch + 1} (Validating...)")
                 
-                # Tensorboard记录
-                if self.writer:
-                    self.writer.add_scalar('Loss/Train_Batch', loss.item(), self.current_iteration)
-                    self.writer.add_scalar('LR', self.optimizer.param_groups[0]['lr'], self.current_iteration)
+                # 执行验证
+                val_metrics = self.validate_epoch()
+                
+                # 检查是否是最佳模型
+                is_best = val_metrics['loss'] < self.best_val_loss
+                if is_best:
+                    self.best_val_loss = val_metrics['loss']
+                
+                # 保存checkpoint (添加调试信息)
+                try:
+                    self.save_checkpoint(is_best=is_best)
+                    checkpoint_status = "✅" 
+                except Exception as e:
+                    checkpoint_status = f"❌({e})"
+                
+                # 输出验证结果 (强制刷新输出)
+                best_indicator = " 🎯" if is_best else ""
+                result_msg = f"\n💯 Iter {self.current_iteration:4d}: Val={val_metrics['loss']:.4f}{best_indicator} {checkpoint_status}"
+                print(result_msg, flush=True)
+                
+                # 恢复训练进度条描述
+                progress_bar.set_description(f"Epoch {self.current_epoch + 1}")
             
             # 早期停止检查（基于迭代数）
             max_iters = trainer_config.get('max_num_iterations')
             if max_iters and self.current_iteration >= max_iters:
-                self.logger.info(f"Reached maximum iterations: {max_iters}")
+                progress_bar.set_description(f"Epoch {self.current_epoch + 1} (Max iters reached)")
                 break
         
+        progress_bar.close()
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         return {'loss': avg_loss, 'num_batches': num_batches}
     
@@ -198,12 +238,11 @@ class EventVoxelTrainer:
         # 只验证前2个文件 × 5个segments = 10个样本
         max_val_batches = 10  # 前2个文件的10个数据对
         
+        # 修复验证逻辑：不转换为list，直接遍历并计数
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
                 if batch_idx >= max_val_batches:
-                    self.logger.info(f"Validation limited to {max_val_batches} batches for speed")
                     break
-                    
                 inputs = batch['raw'].to(self.device)
                 targets = batch['label'].to(self.device)
                 
@@ -212,8 +251,11 @@ class EventVoxelTrainer:
                 
                 total_loss += loss.item()
                 num_batches += 1
-        
         avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
+        
+        # 调试输出验证统计
+        print(f"[DEBUG] Validation completed: {num_batches} batches, avg_loss={avg_loss:.6f}", flush=True)
+        
         return {'loss': avg_loss, 'num_batches': num_batches}
     
     def save_checkpoint(self, is_best: bool = False):
@@ -238,13 +280,13 @@ class EventVoxelTrainer:
         if is_best:
             best_path = self.checkpoint_dir / 'best_checkpoint.pth'
             torch.save(checkpoint, best_path)
-            self.logger.info(f"Saved best checkpoint: {best_path}")
+            # self.logger.info(f"Saved best checkpoint: {best_path}")  # Reduce verbosity
         
         # 保存epoch checkpoint
         epoch_path = self.checkpoint_dir / f'checkpoint_epoch_{self.current_epoch:04d}.pth'
         torch.save(checkpoint, epoch_path)
         
-        self.logger.info(f"Saved checkpoint: {latest_path}")
+        # self.logger.info(f"Saved checkpoint: {latest_path}")  # Reduce verbosity
     
     def load_checkpoint(self, checkpoint_path: str) -> bool:
         """加载checkpoint"""
@@ -286,41 +328,21 @@ class EventVoxelTrainer:
         for epoch in range(self.current_epoch, max_epochs):
             self.current_epoch = epoch
             
-            self.logger.info(f"\n=== Epoch {epoch + 1}/{max_epochs} ===")
+            # 简洁的epoch开始信息
+            print(f"\n📊 Epoch {epoch + 1}/{max_epochs}")
             
-            # 训练
+            # 训练 - 验证逻辑现在在train_epoch内部处理
             train_metrics = self.train_epoch()
             
-            # 验证（定期进行）
-            if (self.current_iteration % validate_after_iters == 0) or (epoch == max_epochs - 1):
-                val_metrics = self.validate_epoch()
-                
-                # 记录日志
-                self.logger.info(
-                    f"Epoch {epoch + 1:3d} completed | "
-                    f"Train Loss: {train_metrics['loss']:.6f} | "
-                    f"Val Loss: {val_metrics['loss']:.6f}"
-                )
-                
-                # Tensorboard记录  
-                if self.writer:
-                    self.writer.add_scalar('Loss/Train_Epoch', train_metrics['loss'], epoch)
-                    self.writer.add_scalar('Loss/Val_Epoch', val_metrics['loss'], epoch)
-                
-                # 保存checkpoint
-                is_best = val_metrics['loss'] < self.best_val_loss
-                if is_best:
-                    self.best_val_loss = val_metrics['loss']
-                
-                self.save_checkpoint(is_best=is_best)
+            # Epoch完成后的总结 - 简化版本，详细验证在train_epoch内部
+            print(f"✅ Epoch {epoch + 1:3d}: Train={train_metrics['loss']:.4f}")
             
-            else:
-                # 只记录训练loss
-                self.logger.info(f"Epoch {epoch + 1:3d} completed | Train Loss: {train_metrics['loss']:.6f}")
-                if self.writer:
-                    self.writer.add_scalar('Loss/Train_Epoch', train_metrics['loss'], epoch)
-                
-                self.save_checkpoint(is_best=False)
+            # Tensorboard epoch级记录
+            if self.writer:
+                self.writer.add_scalar('Loss/Train_Epoch', train_metrics['loss'], epoch)
+            
+            # 每个epoch都保存checkpoint (保证不丢失)
+            self.save_checkpoint(is_best=False)
             
             # 学习率调度
             if self.scheduler:
@@ -328,11 +350,12 @@ class EventVoxelTrainer:
             
             # 早期停止检查（基于迭代数）
             if max_iters and self.current_iteration >= max_iters:
-                self.logger.info(f"Training stopped: reached max iterations {max_iters}")
+                print(f"🛑 Training stopped: reached max iterations {max_iters}")
                 # 在训练结束前保存final checkpoint
                 val_metrics = self.validate_epoch()
-                self.logger.info(f"Final validation | Train Loss: {train_metrics['loss']:.6f} | Val Loss: {val_metrics['loss']:.6f}")
                 is_best = val_metrics['loss'] < self.best_val_loss
+                best_indicator = " 🎯" if is_best else ""
+                print(f"🏁 Final: Train={train_metrics['loss']:.4f}, Val={val_metrics['loss']:.4f}{best_indicator}")
                 if is_best:
                     self.best_val_loss = val_metrics['loss']
                 self.save_checkpoint(is_best=is_best)
@@ -340,10 +363,10 @@ class EventVoxelTrainer:
         
         # 训练结束
         total_time = time.time() - start_time
-        self.logger.info(f"\n=== Training Completed ===")
-        self.logger.info(f"Total training time: {total_time/3600:.2f} hours")
-        self.logger.info(f"Final validation loss: {self.best_val_loss:.6f}")
-        self.logger.info(f"Best checkpoint: {self.checkpoint_dir}/best_checkpoint.pth")
+        print(f"\n🎉 Training Completed!")
+        print(f"⏱️  Total time: {total_time/3600:.2f}h")
+        print(f"🎯 Best val loss: {self.best_val_loss:.4f}")
+        print(f"💾 Checkpoint: {self.checkpoint_dir}/best_checkpoint.pth")
         
         # 保存训练摘要
         summary = {

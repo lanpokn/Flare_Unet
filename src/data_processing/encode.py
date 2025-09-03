@@ -45,12 +45,13 @@ def load_h5_events(file_path):
     unique_polarities = np.unique(p)
     p_converted = np.where(p == 1, 1, -1)
     
-    # Report conversion
+    # Report conversion (only in debug mode)
     pos_count = len(p[p == 1])
     neg_count = len(p) - pos_count
-    print(f"Applied universal polarity rule: 1→positive, non-1→negative")
-    print(f"Original values: {unique_polarities}")
-    print(f"Converted: {pos_count:,} positive (+1), {neg_count:,} negative (-1)")
+    # Remove verbose logging - only print in debug mode
+    # print(f"Applied universal polarity rule: 1→positive, non-1→negative")
+    # print(f"Original values: {unique_polarities}")
+    # print(f"Converted: {pos_count:,} positive (+1), {neg_count:,} negative (-1)")
         
     # Stack into (N, 4) array: [t, x, y, p]
     events_np = np.column_stack([t, x, y, p_converted])
@@ -88,8 +89,9 @@ def events_to_voxel(events_np, num_bins=32, sensor_size=(480, 640), fixed_durati
     t_min = ts.min()
     dt = fixed_duration_us / num_bins  # Fixed bin duration
     
-    print(f"Using FIXED temporal bins: {num_bins} bins × {dt/1000:.2f}ms = {fixed_duration_us/1000:.1f}ms total")
-    print(f"Data time range: {t_min:.0f} - {ts.max():.0f}μs ({(ts.max()-t_min)/1000:.1f}ms)")
+    # Remove verbose logging - only print in debug mode
+    # print(f"Using FIXED temporal bins: {num_bins} bins × {dt/1000:.2f}ms = {fixed_duration_us/1000:.1f}ms total")
+    # print(f"Data time range: {t_min:.0f} - {ts.max():.0f}μs ({(ts.max()-t_min)/1000:.1f}ms)")
     
     # Assign events to temporal bins using fixed intervals
     bin_indices = np.clip(((ts - t_min) / dt).astype(int), 0, num_bins - 1)
