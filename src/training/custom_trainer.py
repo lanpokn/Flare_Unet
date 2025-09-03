@@ -191,8 +191,15 @@ class EventVoxelTrainer:
             validate_after_iters = trainer_config.get('validate_after_iters', 100)
             
             if self.current_iteration % validate_after_iters == 0:
+                # 调试输出验证触发
+                print(f"\n[DEBUG] Validation triggered: iter={self.current_iteration}, validate_after_iters={validate_after_iters}", flush=True)
+                
                 # 暂停训练进度条，进行验证
                 progress_bar.set_description(f"Epoch {self.current_epoch + 1} (Validating...)")
+                
+                # 检查模型参数是否在变化 (调试)
+                model_params_sum = sum([p.sum().item() for p in self.model.parameters()])
+                print(f"[DEBUG] Model params sum: {model_params_sum:.6f}", flush=True)
                 
                 # 执行验证
                 val_metrics = self.validate_epoch()
@@ -205,7 +212,8 @@ class EventVoxelTrainer:
                 # 保存checkpoint (添加调试信息)
                 try:
                     self.save_checkpoint(is_best=is_best)
-                    checkpoint_status = "✅" 
+                    checkpoint_name = f"epoch_{self.current_epoch:04d}_iter_{self.current_iteration:06d}"
+                    checkpoint_status = f"✅({checkpoint_name})" 
                 except Exception as e:
                     checkpoint_status = f"❌({e})"
                 
@@ -239,6 +247,7 @@ class EventVoxelTrainer:
         max_val_batches = 10  # 前2个文件的10个数据对
         
         # 修复验证逻辑：不转换为list，直接遍历并计数
+        batch_losses = []  # 记录每个batch的loss
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):
                 if batch_idx >= max_val_batches:
@@ -249,12 +258,20 @@ class EventVoxelTrainer:
                 outputs = self.model(inputs)
                 loss = self.criterion(outputs, targets)
                 
-                total_loss += loss.item()
+                batch_loss = loss.item()
+                batch_losses.append(batch_loss)
+                total_loss += batch_loss
                 num_batches += 1
         avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
         
         # 调试输出验证统计
+        batch_losses_str = ", ".join([f"{loss:.4f}" for loss in batch_losses])
         print(f"[DEBUG] Validation completed: {num_batches} batches, avg_loss={avg_loss:.6f}", flush=True)
+        print(f"[DEBUG] Individual batch losses: [{batch_losses_str}]", flush=True)
+        print(f"[DEBUG] Input shape: {inputs.shape}, Target shape: {targets.shape}", flush=True)
+        
+        # 恢复训练模式 (关键修复!)
+        self.model.train()
         
         return {'loss': avg_loss, 'num_batches': num_batches}
     
@@ -282,9 +299,9 @@ class EventVoxelTrainer:
             torch.save(checkpoint, best_path)
             # self.logger.info(f"Saved best checkpoint: {best_path}")  # Reduce verbosity
         
-        # 保存epoch checkpoint
-        epoch_path = self.checkpoint_dir / f'checkpoint_epoch_{self.current_epoch:04d}.pth'
-        torch.save(checkpoint, epoch_path)
+        # 保存iteration checkpoint (避免覆盖)
+        iter_path = self.checkpoint_dir / f'checkpoint_epoch_{self.current_epoch:04d}_iter_{self.current_iteration:06d}.pth'
+        torch.save(checkpoint, iter_path)
         
         # self.logger.info(f"Saved checkpoint: {latest_path}")  # Reduce verbosity
     

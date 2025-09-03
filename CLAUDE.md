@@ -581,29 +581,32 @@ python main.py inference --config configs/inference_config.yaml \
 - **性能问题**: 训练速度慢(~23s/iter)，需要优化数据加载和模型配置
 
 ### 最新优化 - **2025-01-03**
-✅ **日志系统现代化 + Bug修复**:
+✅ **日志系统现代化 + 关键Bug修复**:
 - **清理刷屏**: 移除encode.py中verbose极性转换和时间bin日志
 - **tqdm进度条**: 训练/验证阶段实时显示loss和进度
 - **简化输出**: emoji指示符，4位精度loss显示
 - **验证逻辑修复**: 将validation检查移回train_epoch内部循环，确保按iteration正确触发
 - **DataLoader修复**: 修复验证时的`list(val_loader)`内存问题，改为直接enumerate遍历
-- **Checkpoint调试**: 添加保存状态显示和错误捕获
+- **Checkpoint命名修复**: 从`checkpoint_epoch_0000.pth`(覆盖)改为`checkpoint_epoch_0000_iter_000002.pth`(不覆盖)
+- **Checkpoint调试**: 添加保存状态显示、错误捕获和具体文件名显示
 - **输出强制刷新**: 使用`flush=True`确保验证结果不被进度条覆盖
+- **验证异常调试**: 添加调试输出排查validation loss不变问题
 
-**现代化训练界面 (修复后)**:
+**当前训练界面问题**:
 ```
 📊 Epoch 1/50
-Epoch 1:   1%|▌    | 2/2500 [00:45<15:55:55, 22.98s/it, Loss=1.1777, Avg=1.4754, LR=2.00e-04] (Validating...)
-[DEBUG] Validation completed: 10 batches, avg_loss=1.234567
+Epoch 1:   0%| | 1/2500 [00:35<7:04:51, 10.20s/it, Loss=2.5190, Avg=1.9306, LR=2.00e-04] (Validating...)
+[DEBUG] Validation completed: 10 batches, avg_loss=1.109320, total_loss=11.093200
 
-💯 Iter    2: Val=1.2346 🎯 ✅
+💯 Iter    2: Val=1.1093 🎯 ✅(epoch_0000_iter_000002)
 
-Epoch 1:   1%|▌    | 4/2500 [01:30<15:55:55, 22.98s/it, Loss=1.1777, Avg=1.3251, LR=2.00e-04] (Validating...)
-[DEBUG] Validation completed: 10 batches, avg_loss=1.198765
+Epoch 1:   0%| | 3/2500 [03:19<45:46:28, 65.99s/it, Loss=1.1454, Avg=1.8759, LR=2.00e-04] (Validating...)
+[DEBUG] Validation completed: 10 batches, avg_loss=1.109320, total_loss=11.093200
 
-💯 Iter    4: Val=1.1988 ✅
-...
+💯 Iter    4: Val=1.1093 ✅(epoch_0000_iter_000004)
 ```
+
+**问题**: Validation loss始终为1.109320，模型可能没有真正学习或验证数据集有问题
 
 ## 使用指南
 
