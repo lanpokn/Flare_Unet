@@ -36,7 +36,7 @@ model:
   layer_order: gcr
   num_groups: 2             # Match training: reduced from 8 to 2
   num_levels: 2             # Match training: reduced from 4 to 2
-  final_sigmoid: false      # Match training configuration
+  final_sigmoid: true       # 强制设为true，代码中会替换为Identity
   conv_kernel_size: 3
   pool_kernel_size: 2
   

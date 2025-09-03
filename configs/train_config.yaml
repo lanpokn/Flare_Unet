@@ -32,12 +32,12 @@ model:
   in_channels: 1            # Single channel input (voxel grid)
   out_channels: 1           # Single channel output (deflared voxel)
   
-  # Architecture parameters (小参数避免显存爆炸)
-  f_maps: [4, 8]            # 极小特征图 (2层: 4->8)
+  # Architecture parameters (合理的最小配置)
+  f_maps: [16, 32, 64]      # 合理的特征图 (3层: 16->32->64)
   layer_order: gcr          # Group normalization + Conv + ReLU
-  num_groups: 1             # 最小组数 (避免显存问题) 
-  num_levels: 2             # 最小层数 (避免显存问题)
-  final_sigmoid: false      # No sigmoid for MSE regression loss
+  num_groups: 8             # 标准组数
+  num_levels: 3             # 3层应该足够了
+  final_sigmoid: true      # 强制设为true，代码中会替换为Identity
   
   # Advanced options (minimal)
   conv_kernel_size: 3       # Convolution kernel size
@@ -74,7 +74,7 @@ trainer:
   
   # Validation and logging
   validate_after_iters: 2  # 每1250个iteration验证一次 (快速反馈)
-  log_after_iters: 250       # 每1个iteration记录日志到tensorboard
+  log_after_iters: 25       # 每1个iteration记录日志到tensorboard
   max_num_workers: 0         # 单线程避免并发问题
   
   # Early stopping (optional)

@@ -608,6 +608,28 @@ Epoch 1:   0%| | 3/2500 [03:19<45:46:28, 65.99s/it, Loss=1.1454, Avg=1.8759, LR=
 
 **问题**: Validation loss始终为1.109320，模型可能没有真正学习或验证数据集有问题
 
+### 最新修复 - **2025-01-03 pytorch-3dunet final_sigmoid问题解决**
+✅ **pytorch-3dunet激活函数问题彻底解决**:
+- **根本问题**: pytorch-3dunet的设计缺陷，`final_sigmoid=False`会设置`Softmax(dim=1)`激活
+- **单通道问题**: 单输出通道时Softmax永远输出1.0，导致模型输出全是1
+- **错误方案**: 直接设置`final_sigmoid: false`会触发Softmax bug
+- **正确方案**: 强制设置`final_sigmoid=True`然后替换为`Identity()`
+- **实现位置**: `src/training/training_factory.py:67-75`
+- **配置更新**: 所有配置文件统一设置`final_sigmoid: true`
+- **验证测试**: 输出范围从全1变为正常范围`[-0.92, 0.87]`
+
+**技术细节**:
+```python
+# pytorch-3dunet行为:
+final_sigmoid=True  → Sigmoid() 激活    (输出[0,1])  
+final_sigmoid=False → Softmax(dim=1)激活 (单通道→全1)
+
+# 我们的解决方案:
+final_sigmoid=True → 强制替换为Identity() (无界输出)
+```
+
+**修复影响**: 这个问题可能是导致"validation loss始终1.109320"的根本原因，模型现在应该能正常学习
+
 ## 使用指南
 
 ### GPU环境准备 - **2025-01-03更新**

@@ -59,10 +59,20 @@ class TrainingFactory:
                 layer_order=model_config.get('layer_order', 'gcr'),
                 num_groups=model_config.get('num_groups', 8),
                 num_levels=model_config.get('num_levels', 4),
-                final_sigmoid=model_config.get('final_sigmoid', False),
+                final_sigmoid=True,  # 设为True避免Softmax bug，下面强制替换为Identity
                 conv_kernel_size=model_config.get('conv_kernel_size', 3),
                 pool_kernel_size=model_config.get('pool_kernel_size', 2)
             )
+            
+            # 强制替换激活函数为Identity以支持无界voxel输出
+            # pytorch-3dunet设计问题: final_sigmoid=False会用Softmax，单通道时输出全1
+            if hasattr(model, 'final_activation'):
+                import torch.nn as nn
+                original_activation = str(model.final_activation)
+                model.final_activation = nn.Identity()
+                self.logger.info(f"Forced replacement: {original_activation} -> Identity() for unbounded voxel values")
+            else:
+                self.logger.warning("Could not find final_activation layer to replace")
             
             # 计算参数数量
             total_params = sum(p.numel() for p in model.parameters())

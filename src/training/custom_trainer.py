@@ -75,6 +75,44 @@ class EventVoxelTrainer:
         self.logger.info(f"  Train samples: {len(train_loader.dataset)}")
         self.logger.info(f"  Val samples: {len(val_loader.dataset)}")
         self.logger.info(f"  Checkpoint dir: {self.checkpoint_dir}")
+        
+        # 添加模型架构检查
+        self._debug_model_architecture()
+    
+    def _debug_model_architecture(self):
+        """调试模型架构，检查可能导致输出全1的问题"""
+        self.logger.info("=== Model Architecture Debug ===")
+        
+        # 检查final_sigmoid设置
+        if hasattr(self.model, 'final_sigmoid'):
+            self.logger.info(f"Model final_sigmoid: {self.model.final_sigmoid}")
+        
+        # 检查模型的最后几层
+        model_children = list(self.model.children())
+        if model_children:
+            last_layer = model_children[-1]
+            self.logger.info(f"Last layer type: {type(last_layer)}")
+            
+        # 快速前向传播测试
+        self.model.eval()
+        with torch.no_grad():
+            # 创建测试输入: 全0
+            test_input_zeros = torch.zeros(1, 1, 8, 480, 640).to(self.device)
+            test_output_zeros = self.model(test_input_zeros)
+            self.logger.info(f"Test with zeros input: output_mean={test_output_zeros.mean():.6f}, output_std={test_output_zeros.std():.6f}")
+            
+            # 创建测试输入: 全1
+            test_input_ones = torch.ones(1, 1, 8, 480, 640).to(self.device)
+            test_output_ones = self.model(test_input_ones)
+            self.logger.info(f"Test with ones input: output_mean={test_output_ones.mean():.6f}, output_std={test_output_ones.std():.6f}")
+            
+            # 创建测试输入: 随机
+            test_input_random = torch.randn(1, 1, 8, 480, 640).to(self.device)
+            test_output_random = self.model(test_input_random)
+            self.logger.info(f"Test with random input: output_mean={test_output_random.mean():.6f}, output_std={test_output_random.std():.6f}")
+        
+        self.model.train()
+        self.logger.info("=== End Model Debug ===")
     
     def _setup_optimizer_and_loss(self):
         """设置优化器和损失函数"""
@@ -160,6 +198,12 @@ class EventVoxelTrainer:
             # 前向传播
             self.optimizer.zero_grad()
             outputs = self.model(inputs)               # (B, 1, 8, H, W)
+            
+            # 深度调试训练阶段 (每100个batch打印一次)
+            if batch_idx % 100 == 0:
+                print(f"\n[DEBUG-TRAIN] Batch {batch_idx}: Input mean={inputs.mean():.4f}, Output mean={outputs.mean():.4f}")
+                print(f"[DEBUG-TRAIN] Are outputs identical to inputs? {torch.equal(outputs, inputs)}")
+                print(f"[DEBUG-TRAIN] Model in training mode? {self.model.training}")
             
             # 计算损失
             loss = self.criterion(outputs, targets)
@@ -255,7 +299,28 @@ class EventVoxelTrainer:
                 inputs = batch['raw'].to(self.device)
                 targets = batch['label'].to(self.device)
                 
+                # 深度调试：检查模型输入输出
+                if batch_idx == 0:  # 只在第一个batch打印
+                    print(f"[DEBUG] Input stats: min={inputs.min():.4f}, max={inputs.max():.4f}, mean={inputs.mean():.4f}")
+                    print(f"[DEBUG] Target stats: min={targets.min():.4f}, max={targets.max():.4f}, mean={targets.mean():.4f}")
+                    # 检查voxel值分布
+                    unique_values_input = torch.unique(inputs).cpu().numpy()[:10]  # 前10个唯一值
+                    unique_values_target = torch.unique(targets).cpu().numpy()[:10]
+                    print(f"[DEBUG] Input unique values (first 10): {unique_values_input}")
+                    print(f"[DEBUG] Target unique values (first 10): {unique_values_target}")
+                
                 outputs = self.model(inputs)
+                
+                if batch_idx == 0:  # 只在第一个batch打印
+                    print(f"[DEBUG] Output stats: min={outputs.min():.4f}, max={outputs.max():.4f}, mean={outputs.mean():.4f}")
+                    print(f"[DEBUG] Output shape: {outputs.shape}")
+                    print(f"[DEBUG] Are outputs identical to targets? {torch.equal(outputs, targets)}")
+                    print(f"[DEBUG] Output dtype: {outputs.dtype}, device: {outputs.device}")
+                    print(f"[DEBUG] Output requires_grad: {outputs.requires_grad}")
+                    
+                    # 检查模型的最后几层输出
+                    print(f"[DEBUG] Checking model architecture...")
+                
                 loss = self.criterion(outputs, targets)
                 
                 batch_loss = loss.item()
