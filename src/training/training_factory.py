@@ -44,15 +44,15 @@ class TrainingFactory:
         model_config = self.config['model']
         
         try:
-            # 尝试导入pytorch-3dunet的UNet3D
+            # 尝试导入pytorch-3dunet的ResidualUNet3D
             try:
-                from pytorch3dunet.unet3d.model import UNet3D
+                from pytorch3dunet.unet3d.model import ResidualUNet3D
             except ImportError:
                 # 备选导入路径
-                from pytorch3dunet.unet3d import UNet3D
+                from pytorch3dunet.unet3d import ResidualUNet3D
             
             # 创建模型
-            model = UNet3D(
+            model = ResidualUNet3D(
                 in_channels=model_config['in_channels'],
                 out_channels=model_config['out_channels'],
                 f_maps=model_config.get('f_maps', 32),
@@ -78,21 +78,22 @@ class TrainingFactory:
             total_params = sum(p.numel() for p in model.parameters())
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             
-            self.logger.info(f"Created UNet3D model:")
+            self.logger.info(f"Created ResidualUNet3D model:")
             self.logger.info(f"  - Architecture: {model_config['f_maps']} feature maps, {model_config.get('num_levels', 4)} levels")
             self.logger.info(f"  - Input channels: {model_config['in_channels']}")
             self.logger.info(f"  - Output channels: {model_config['out_channels']}")
+            self.logger.info(f"  - Residual connections: Enabled for deflare task")
             self.logger.info(f"  - Total parameters: {total_params:,}")
             self.logger.info(f"  - Trainable parameters: {trainable_params:,}")
             
             return model
             
         except ImportError as e:
-            self.logger.error(f"Failed to import pytorch-3dunet UNet3D: {e}")
+            self.logger.error(f"Failed to import pytorch-3dunet ResidualUNet3D: {e}")
             self.logger.error("Please install pytorch-3dunet: conda install -c conda-forge pytorch-3dunet")
             raise
         except Exception as e:
-            self.logger.error(f"Failed to create UNet3D model: {e}")
+            self.logger.error(f"Failed to create ResidualUNet3D model: {e}")
             raise
     
     def create_datasets(self) -> Tuple[EventVoxelDataset, EventVoxelDataset]:

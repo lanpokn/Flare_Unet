@@ -25,9 +25,9 @@ loaders:
 # Dataset-specific configuration (HDF5Dataset parameters)
 # Note: Our test data is already in (8, 480, 640) format - no additional processing needed
 
-# 3D U-Net model configuration
+# 3D Residual U-Net model configuration
 model:
-  name: UNet3D              # Standard 3D U-Net
+  name: ResidualUNet3D      # Residual 3D U-Net for deflare (better for residual learning)
   # Input/output channels
   in_channels: 1            # Single channel input (voxel grid)
   out_channels: 1           # Single channel output (deflared voxel)
