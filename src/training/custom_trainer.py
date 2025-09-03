@@ -217,7 +217,7 @@ class EventVoxelTrainer:
             # Debug可视化钩子 - 模型输出后
             if debug_config.get('enabled', False) and batch_idx < 2:
                 self._trigger_model_output_visualization(
-                    batch_idx, outputs, debug_config['debug_dir'], self.current_epoch
+                    batch_idx, inputs, outputs, debug_config['debug_dir'], self.current_epoch
                 )
             
             # 深度调试训练阶段 (每100个batch打印一次)
@@ -560,55 +560,95 @@ class EventVoxelTrainer:
             import traceback
             self.logger.debug(traceback.format_exc())
     
-    def _trigger_model_output_visualization(self, batch_idx: int, outputs: torch.Tensor, 
+    def _trigger_model_output_visualization(self, batch_idx: int, inputs: torch.Tensor, outputs: torch.Tensor, 
                                           debug_dir: str, epoch: int):
         """
         Debug可视化钩子 - 模型输出后触发
-        生成9个可视化文件夹中的后3个：
+        生成最终输出的可视化（对于真正残差学习，这是input + residual）
         7. 模型输出事件3D可视化
         8. 模型输出事件2D可视化  
         9. 模型输出voxel可视化
+        + 额外：残差可视化（如果是真正残差网络）
         """
         try:
             from pathlib import Path
             
             iteration_dir = Path(debug_dir) / f"epoch_{epoch:03d}_iter_{batch_idx:03d}"
             
-            # 获取第一个样本的模型输出
-            output_voxel = outputs[0, 0].cpu()  # (8, H, W)
+            # 获取第一个样本的数据
+            input_voxel = inputs[0, 0].cpu()   # (8, H, W)
+            output_voxel = outputs[0, 0].cpu()  # (8, H, W) - 这是最终输出
             
-            # 从output voxel解码为events
+            # 检查是否是真正的残差学习模型
+            is_true_residual = hasattr(self.model, 'get_residual')
+            
+            if is_true_residual:
+                # 获取学习到的残差
+                with torch.no_grad():
+                    residual_voxel = self.model.get_residual(inputs)[0, 0].cpu()  # (8, H, W)
+                
+                self.logger.info(f"🐛 True residual learning detected:")
+                self.logger.info(f"🐛   Input mean: {input_voxel.mean():.4f}, std: {input_voxel.std():.4f}")
+                self.logger.info(f"🐛   Residual mean: {residual_voxel.mean():.4f}, std: {residual_voxel.std():.4f}")
+                self.logger.info(f"🐛   Output mean: {output_voxel.mean():.4f}, std: {output_voxel.std():.4f}")
+                self.logger.info(f"🐛   Identity check: output ≈ input + residual = {torch.allclose(output_voxel, input_voxel + residual_voxel, atol=1e-6)}")
+                
+                # 额外：残差可视化
+                residual_voxel_dir = iteration_dir / "8_residual_voxel"
+                residual_voxel_dir.mkdir(exist_ok=True)
+                
+                from src.data_processing.professional_visualizer import visualize_voxel
+                visualize_voxel(residual_voxel, sensor_size=(480, 640), output_dir=str(residual_voxel_dir), 
+                              name="residual_voxel", duration_ms=20)
+                
+                # 残差Events可视化 (如果残差有意义)
+                if residual_voxel.abs().sum() > 1e-6:  # 只有当残差不为零时才解码
+                    from src.data_processing.decode import voxel_to_events
+                    residual_events_np = voxel_to_events(residual_voxel, total_duration=20000, sensor_size=(480, 640))
+                    
+                    residual_events_dir = iteration_dir / "8_residual_events"
+                    residual_events_dir.mkdir(exist_ok=True)
+                    
+                    from src.data_processing.professional_visualizer import visualize_events
+                    visualize_events(residual_events_np, sensor_size=(480, 640), output_dir=str(residual_events_dir), 
+                                   name="residual_events", num_time_slices=8)
+            
+            # 最终输出可视化 (无论哪种模型)
             from src.data_processing.decode import voxel_to_events
             output_events_np = voxel_to_events(output_voxel, total_duration=20000, sensor_size=(480, 640))
             
-            # 使用专业可视化系统 - 修复函数调用
             from src.data_processing.professional_visualizer import visualize_events, visualize_voxel
             
-            # === 模型输出可视化 ===
-            # 7-8. 模型输出事件3D+2D可视化 (使用正确的参数顺序)
+            # === 最终输出可视化 ===
+            # 7. 最终输出事件可视化
             output_events_dir = iteration_dir / "7_output_events"
             output_events_dir.mkdir(exist_ok=True)
             visualize_events(output_events_np, sensor_size=(480, 640), output_dir=str(output_events_dir), 
-                           name="output_events", num_time_slices=8)
+                           name="final_output_events", num_time_slices=8)
             
-            # 9. 模型输出voxel可视化
+            # 9. 最终输出voxel可视化
             output_voxel_dir = iteration_dir / "9_output_voxel"
             output_voxel_dir.mkdir(exist_ok=True)
             visualize_voxel(output_voxel, sensor_size=(480, 640), output_dir=str(output_voxel_dir), 
-                          name="output_voxel", duration_ms=20)
+                          name="final_output_voxel", duration_ms=20)
             
-            self.logger.info(f"🐛 Generated model output visualizations (7,9/9) in {iteration_dir}")
-            self.logger.info(f"🐛 All debug visualizations completed! (6 folders total: 1,3,4,6,7,9)")
+            folder_count = "8" if is_true_residual else "6"
+            self.logger.info(f"🐛 Generated final output visualizations (7,9/{folder_count}) in {iteration_dir}")
+            if is_true_residual:
+                self.logger.info(f"🐛 Generated residual visualizations (8/8) in {iteration_dir}")
+                self.logger.info(f"🐛 All debug visualizations completed! (8 folders total: 1,3,4,6,7,8,9)")
+            else:
+                self.logger.info(f"🐛 All debug visualizations completed! (6 folders total: 1,3,4,6,7,9)")
             
             # 生成比较总结
-            self._generate_debug_summary(iteration_dir, batch_idx, epoch)
+            self._generate_debug_summary(iteration_dir, batch_idx, epoch, is_true_residual)
             
         except Exception as e:
             self.logger.warning(f"🐛 Model output visualization failed: {e}")
             import traceback
             self.logger.debug(traceback.format_exc())
     
-    def _generate_debug_summary(self, iteration_dir: Path, batch_idx: int, epoch: int):
+    def _generate_debug_summary(self, iteration_dir: Path, batch_idx: int, epoch: int, is_true_residual: bool = False):
         """生成debug总结信息"""
         try:
             summary_file = iteration_dir / "debug_summary.txt"
@@ -620,17 +660,36 @@ class EventVoxelTrainer:
                 f.write(f"Batch: {batch_idx}\n")
                 f.write(f"Model: {self.model.__class__.__name__}\n")
                 f.write(f"Device: {self.device}\n")
-                f.write(f"\n6 Visualization Folders (comprehensive):\n")
-                f.write(f"1. 1_input_events/          - Input events (3D+2D+temporal) comprehensive\n")
-                f.write(f"2. 3_input_voxel/           - Input voxel temporal bins\n")
-                f.write(f"3. 4_target_events/         - Target events (3D+2D+temporal) comprehensive\n") 
-                f.write(f"4. 6_target_voxel/          - Target voxel temporal bins\n")
-                f.write(f"5. 7_output_events/         - Model output events (3D+2D+temporal) comprehensive\n")
-                f.write(f"6. 9_output_voxel/          - Model output voxel temporal bins\n")
+                f.write(f"True Residual Learning: {'Yes' if is_true_residual else 'No'}\n")
+                
+                if is_true_residual:
+                    f.write(f"\n8 Visualization Folders (True Residual Learning):\n")
+                    f.write(f"1. 1_input_events/          - Input events (3D+2D+temporal) comprehensive\n")
+                    f.write(f"2. 3_input_voxel/           - Input voxel temporal bins\n")
+                    f.write(f"3. 4_target_events/         - Target events (3D+2D+temporal) comprehensive\n") 
+                    f.write(f"4. 6_target_voxel/          - Target voxel temporal bins\n")
+                    f.write(f"5. 7_output_events/         - Final output events (input + residual) comprehensive\n")
+                    f.write(f"6. 8_residual_voxel/        - Learned residual voxel temporal bins\n")
+                    f.write(f"7. 8_residual_events/       - Learned residual events (if non-zero)\n")
+                    f.write(f"8. 9_output_voxel/          - Final output voxel temporal bins\n")
+                    f.write(f"\nTrue Residual Architecture:\n")
+                    f.write(f"  final_output = input_voxel + backbone_network(input_voxel)\n")
+                    f.write(f"  backbone learns residual ≈ -flare_noise\n")
+                    f.write(f"  Zero-initialized final layer for perfect initial identity mapping\n")
+                else:
+                    f.write(f"\n6 Visualization Folders (Standard Model):\n")
+                    f.write(f"1. 1_input_events/          - Input events (3D+2D+temporal) comprehensive\n")
+                    f.write(f"2. 3_input_voxel/           - Input voxel temporal bins\n")
+                    f.write(f"3. 4_target_events/         - Target events (3D+2D+temporal) comprehensive\n") 
+                    f.write(f"4. 6_target_voxel/          - Target voxel temporal bins\n")
+                    f.write(f"5. 7_output_events/         - Model output events (3D+2D+temporal) comprehensive\n")
+                    f.write(f"6. 9_output_voxel/          - Model output voxel temporal bins\n")
+                
                 f.write(f"\nData Format:\n")
                 f.write(f"- Events: (N, 4) [t, x, y, p]\n")
                 f.write(f"- Voxel: (8, 480, 640) [8 temporal bins]\n")
                 f.write(f"- Duration: 20ms per segment\n")
+                f.write(f"- All operations in voxel space (not event space)\n")
                 
             self.logger.info(f"🐛 Debug summary saved to {summary_file}")
             

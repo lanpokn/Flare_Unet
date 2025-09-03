@@ -43,58 +43,102 @@ class TrainingFactory:
         """
         model_config = self.config['model']
         
-        try:
-            # 尝试导入pytorch-3dunet的ResidualUNet3D
+        if model_config['name'] == 'ResidualUNet3D':
             try:
-                from pytorch3dunet.unet3d.model import ResidualUNet3D
-            except ImportError:
-                # 备选导入路径
-                from pytorch3dunet.unet3d import ResidualUNet3D
-            
-            # 创建模型
-            model = ResidualUNet3D(
-                in_channels=model_config['in_channels'],
-                out_channels=model_config['out_channels'],
-                f_maps=model_config.get('f_maps', 32),
-                layer_order=model_config.get('layer_order', 'gcr'),
-                num_groups=model_config.get('num_groups', 8),
-                num_levels=model_config.get('num_levels', 4),
-                final_sigmoid=True,  # 设为True避免Softmax bug，下面强制替换为Identity
-                conv_kernel_size=model_config.get('conv_kernel_size', 3),
-                pool_kernel_size=model_config.get('pool_kernel_size', 2)
-            )
-            
-            # 强制替换激活函数为Identity以支持无界voxel输出
-            # pytorch-3dunet设计问题: final_sigmoid=False会用Softmax，单通道时输出全1
-            if hasattr(model, 'final_activation'):
-                import torch.nn as nn
-                original_activation = str(model.final_activation)
-                model.final_activation = nn.Identity()
-                self.logger.info(f"Forced replacement: {original_activation} -> Identity() for unbounded voxel values")
-            else:
-                self.logger.warning("Could not find final_activation layer to replace")
-            
-            # 计算参数数量
-            total_params = sum(p.numel() for p in model.parameters())
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            
-            self.logger.info(f"Created ResidualUNet3D model:")
-            self.logger.info(f"  - Architecture: {model_config['f_maps']} feature maps, {model_config.get('num_levels', 4)} levels")
-            self.logger.info(f"  - Input channels: {model_config['in_channels']}")
-            self.logger.info(f"  - Output channels: {model_config['out_channels']}")
-            self.logger.info(f"  - Residual connections: Enabled for deflare task")
-            self.logger.info(f"  - Total parameters: {total_params:,}")
-            self.logger.info(f"  - Trainable parameters: {trainable_params:,}")
-            
-            return model
-            
-        except ImportError as e:
-            self.logger.error(f"Failed to import pytorch-3dunet ResidualUNet3D: {e}")
-            self.logger.error("Please install pytorch-3dunet: conda install -c conda-forge pytorch-3dunet")
-            raise
-        except Exception as e:
-            self.logger.error(f"Failed to create ResidualUNet3D model: {e}")
-            raise
+                # 尝试导入pytorch-3dunet的ResidualUNet3D
+                try:
+                    from pytorch3dunet.unet3d.model import ResidualUNet3D
+                except ImportError:
+                    # 备选导入路径
+                    from pytorch3dunet.unet3d import ResidualUNet3D
+                
+                # 创建模型
+                model = ResidualUNet3D(
+                    in_channels=model_config['in_channels'],
+                    out_channels=model_config['out_channels'],
+                    f_maps=model_config.get('f_maps', 32),
+                    layer_order=model_config.get('layer_order', 'gcr'),
+                    num_groups=model_config.get('num_groups', 8),
+                    num_levels=model_config.get('num_levels', 4),
+                    final_sigmoid=True,  # 设为True避免Softmax bug，下面强制替换为Identity
+                    conv_kernel_size=model_config.get('conv_kernel_size', 3),
+                    pool_kernel_size=model_config.get('pool_kernel_size', 2)
+                )
+                
+                # 强制替换激活函数为Identity以支持无界voxel输出
+                # pytorch-3dunet设计问题: final_sigmoid=False会用Softmax，单通道时输出全1
+                if hasattr(model, 'final_activation'):
+                    import torch.nn as nn
+                    original_activation = str(model.final_activation)
+                    model.final_activation = nn.Identity()
+                    self.logger.info(f"Forced replacement: {original_activation} -> Identity() for unbounded voxel values")
+                else:
+                    self.logger.warning("Could not find final_activation layer to replace")
+                
+                # 计算参数数量
+                total_params = sum(p.numel() for p in model.parameters())
+                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                
+                self.logger.info(f"Created ResidualUNet3D model:")
+                self.logger.info(f"  - Architecture: {model_config['f_maps']} feature maps, {model_config.get('num_levels', 4)} levels")
+                self.logger.info(f"  - Input channels: {model_config['in_channels']}")
+                self.logger.info(f"  - Output channels: {model_config['out_channels']}")
+                self.logger.info(f"  - Residual connections: Enabled for deflare task")
+                self.logger.info(f"  - Total parameters: {total_params:,}")
+                self.logger.info(f"  - Trainable parameters: {trainable_params:,}")
+                
+                return model
+                
+            except ImportError as e:
+                self.logger.error(f"Failed to import pytorch-3dunet ResidualUNet3D: {e}")
+                self.logger.error("Please install pytorch-3dunet: conda install -c conda-forge pytorch-3dunet")
+                raise
+            except Exception as e:
+                self.logger.error(f"Failed to create ResidualUNet3D model: {e}")
+                raise
+                
+        elif model_config['name'] == 'TrueResidualUNet3D':
+            # 真正的残差学习实现
+            try:
+                import sys
+                from pathlib import Path
+                sys.path.append(str(Path(__file__).parent.parent.parent))
+                from true_residual_wrapper import TrueResidualUNet3D
+                
+                model = TrueResidualUNet3D(
+                    in_channels=model_config['in_channels'],
+                    out_channels=model_config['out_channels'],
+                    f_maps=model_config.get('f_maps', [16, 32, 64]),
+                    num_levels=model_config.get('num_levels', 3),
+                    backbone=model_config.get('backbone', 'ResidualUNet3D')
+                )
+                
+                # 计算参数数量
+                total_params = sum(p.numel() for p in model.parameters())
+                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                
+                self.logger.info(f"Created TrueResidualUNet3D model:")
+                self.logger.info(f"  - Architecture: {model_config.get('f_maps', [16, 32, 64])} feature maps, {model_config.get('num_levels', 3)} levels")
+                self.logger.info(f"  - Backbone: {model_config.get('backbone', 'ResidualUNet3D')}")
+                self.logger.info(f"  - True residual learning: output = input + backbone(input)")
+                self.logger.info(f"  - Zero-initialized final layer for perfect identity mapping")
+                self.logger.info(f"  - Input channels: {model_config['in_channels']}")
+                self.logger.info(f"  - Output channels: {model_config['out_channels']}")
+                self.logger.info(f"  - Total parameters: {total_params:,}")
+                self.logger.info(f"  - Trainable parameters: {trainable_params:,}")
+                
+                return model
+                
+            except ImportError as e:
+                self.logger.error(f"Failed to import TrueResidualUNet3D: {e}")
+                self.logger.error("Make sure true_residual_wrapper.py is in the project root")
+                raise
+            except Exception as e:
+                self.logger.error(f"Failed to create TrueResidualUNet3D model: {e}")
+                raise
+        
+        else:
+            raise ValueError(f"Unsupported model: {model_config['name']}")
     
     def create_datasets(self) -> Tuple[EventVoxelDataset, EventVoxelDataset]:
         """
