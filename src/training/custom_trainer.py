@@ -191,13 +191,34 @@ class EventVoxelTrainer:
         )
         
         for batch_idx, batch in progress_bar:
+            # 检查debug模式是否需要提前退出
+            debug_config = self.config.get('debug', {})
+            if debug_config.get('enabled', False):
+                max_iterations = debug_config.get('max_iterations', 2)
+                if batch_idx >= max_iterations:
+                    self.logger.info(f"🐛 DEBUG MODE: Stopping after {max_iterations} iterations")
+                    break
+            
             # 数据移动到设备
             inputs = batch['raw'].to(self.device)      # (B, 1, 8, H, W) 
             targets = batch['label'].to(self.device)   # (B, 1, 8, H, W)
             
+            # Debug可视化钩子 - 在数据产生的地方触发
+            if debug_config.get('enabled', False) and batch_idx < 2:  # 只对前2个batch做可视化
+                self._trigger_debug_visualization(
+                    batch_idx, inputs, targets, batch, 
+                    debug_config['debug_dir'], self.current_epoch
+                )
+            
             # 前向传播
             self.optimizer.zero_grad()
             outputs = self.model(inputs)               # (B, 1, 8, H, W)
+            
+            # Debug可视化钩子 - 模型输出后
+            if debug_config.get('enabled', False) and batch_idx < 2:
+                self._trigger_model_output_visualization(
+                    batch_idx, outputs, debug_config['debug_dir'], self.current_epoch
+                )
             
             # 深度调试训练阶段 (每100个batch打印一次)
             if batch_idx % 100 == 0:
@@ -467,3 +488,151 @@ class EventVoxelTrainer:
             self.writer.close()
         
         return self.best_val_loss
+    
+    def _trigger_debug_visualization(self, batch_idx: int, inputs: torch.Tensor, targets: torch.Tensor, 
+                                   batch: dict, debug_dir: str, epoch: int):
+        """
+        Debug可视化钩子 - 在数据产生的地方触发
+        生成9个独立的可视化文件夹：
+        1. 输入事件3D可视化
+        2. 输入事件2D可视化  
+        3. 输入voxel可视化
+        4. 真值事件3D可视化
+        5. 真值事件2D可视化
+        6. 真值voxel可视化
+        """
+        try:
+            import os
+            from pathlib import Path
+            
+            # 创建debug输出结构
+            iteration_dir = Path(debug_dir) / f"epoch_{epoch:03d}_iter_{batch_idx:03d}"
+            iteration_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.logger.info(f"🐛 Generating 9 debug visualizations for Epoch {epoch}, Batch {batch_idx}")
+            self.logger.info(f"🐛 Output directory: {iteration_dir}")
+            
+            # 获取第一个样本进行可视化 (batch_size通常为1)
+            input_voxel = inputs[0, 0].cpu()   # (8, H, W) - 去除batch和channel维度
+            target_voxel = targets[0, 0].cpu() # (8, H, W)
+            
+            # 从voxel解码回events进行可视化
+            from src.data_processing.decode import voxel_to_events
+            
+            # 解码input和target voxel为events
+            # 注意：需要使用正确的duration (20ms = 20000us)
+            input_events_np = voxel_to_events(input_voxel, total_duration=20000, sensor_size=(480, 640))
+            target_events_np = voxel_to_events(target_voxel, total_duration=20000, sensor_size=(480, 640))
+            
+            # 使用专业可视化系统 - 修复函数调用
+            from src.data_processing.professional_visualizer import visualize_events, visualize_voxel
+            
+            # === 输入数据可视化 ===
+            # 1-2. 输入事件3D+2D可视化 (使用正确的参数顺序)
+            input_events_dir = iteration_dir / "1_input_events"
+            input_events_dir.mkdir(exist_ok=True)
+            visualize_events(input_events_np, sensor_size=(480, 640), output_dir=str(input_events_dir), 
+                           name="input_events", num_time_slices=8)
+            
+            # 3. 输入voxel可视化
+            input_voxel_dir = iteration_dir / "3_input_voxel"
+            input_voxel_dir.mkdir(exist_ok=True)
+            visualize_voxel(input_voxel, sensor_size=(480, 640), output_dir=str(input_voxel_dir), 
+                          name="input_voxel", duration_ms=20)
+            
+            # === 真值数据可视化 ===
+            # 4-5. 真值事件3D+2D可视化 (使用正确的参数顺序)
+            target_events_dir = iteration_dir / "4_target_events"
+            target_events_dir.mkdir(exist_ok=True)
+            visualize_events(target_events_np, sensor_size=(480, 640), output_dir=str(target_events_dir), 
+                           name="target_events", num_time_slices=8)
+            
+            # 6. 真值voxel可视化
+            target_voxel_dir = iteration_dir / "6_target_voxel"
+            target_voxel_dir.mkdir(exist_ok=True)
+            visualize_voxel(target_voxel, sensor_size=(480, 640), output_dir=str(target_voxel_dir), 
+                          name="target_voxel", duration_ms=20)
+            
+            self.logger.info(f"🐛 Generated input and target visualizations (1,3,4,6/9) in {iteration_dir}")
+            
+        except Exception as e:
+            self.logger.warning(f"🐛 Debug visualization failed: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+    
+    def _trigger_model_output_visualization(self, batch_idx: int, outputs: torch.Tensor, 
+                                          debug_dir: str, epoch: int):
+        """
+        Debug可视化钩子 - 模型输出后触发
+        生成9个可视化文件夹中的后3个：
+        7. 模型输出事件3D可视化
+        8. 模型输出事件2D可视化  
+        9. 模型输出voxel可视化
+        """
+        try:
+            from pathlib import Path
+            
+            iteration_dir = Path(debug_dir) / f"epoch_{epoch:03d}_iter_{batch_idx:03d}"
+            
+            # 获取第一个样本的模型输出
+            output_voxel = outputs[0, 0].cpu()  # (8, H, W)
+            
+            # 从output voxel解码为events
+            from src.data_processing.decode import voxel_to_events
+            output_events_np = voxel_to_events(output_voxel, total_duration=20000, sensor_size=(480, 640))
+            
+            # 使用专业可视化系统 - 修复函数调用
+            from src.data_processing.professional_visualizer import visualize_events, visualize_voxel
+            
+            # === 模型输出可视化 ===
+            # 7-8. 模型输出事件3D+2D可视化 (使用正确的参数顺序)
+            output_events_dir = iteration_dir / "7_output_events"
+            output_events_dir.mkdir(exist_ok=True)
+            visualize_events(output_events_np, sensor_size=(480, 640), output_dir=str(output_events_dir), 
+                           name="output_events", num_time_slices=8)
+            
+            # 9. 模型输出voxel可视化
+            output_voxel_dir = iteration_dir / "9_output_voxel"
+            output_voxel_dir.mkdir(exist_ok=True)
+            visualize_voxel(output_voxel, sensor_size=(480, 640), output_dir=str(output_voxel_dir), 
+                          name="output_voxel", duration_ms=20)
+            
+            self.logger.info(f"🐛 Generated model output visualizations (7,9/9) in {iteration_dir}")
+            self.logger.info(f"🐛 All debug visualizations completed! (6 folders total: 1,3,4,6,7,9)")
+            
+            # 生成比较总结
+            self._generate_debug_summary(iteration_dir, batch_idx, epoch)
+            
+        except Exception as e:
+            self.logger.warning(f"🐛 Model output visualization failed: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+    
+    def _generate_debug_summary(self, iteration_dir: Path, batch_idx: int, epoch: int):
+        """生成debug总结信息"""
+        try:
+            summary_file = iteration_dir / "debug_summary.txt"
+            
+            with open(summary_file, 'w') as f:
+                f.write(f"Debug Visualization Summary\n")
+                f.write(f"========================\n")
+                f.write(f"Epoch: {epoch}\n")
+                f.write(f"Batch: {batch_idx}\n")
+                f.write(f"Model: {self.model.__class__.__name__}\n")
+                f.write(f"Device: {self.device}\n")
+                f.write(f"\n6 Visualization Folders (comprehensive):\n")
+                f.write(f"1. 1_input_events/          - Input events (3D+2D+temporal) comprehensive\n")
+                f.write(f"2. 3_input_voxel/           - Input voxel temporal bins\n")
+                f.write(f"3. 4_target_events/         - Target events (3D+2D+temporal) comprehensive\n") 
+                f.write(f"4. 6_target_voxel/          - Target voxel temporal bins\n")
+                f.write(f"5. 7_output_events/         - Model output events (3D+2D+temporal) comprehensive\n")
+                f.write(f"6. 9_output_voxel/          - Model output voxel temporal bins\n")
+                f.write(f"\nData Format:\n")
+                f.write(f"- Events: (N, 4) [t, x, y, p]\n")
+                f.write(f"- Voxel: (8, 480, 640) [8 temporal bins]\n")
+                f.write(f"- Duration: 20ms per segment\n")
+                
+            self.logger.info(f"🐛 Debug summary saved to {summary_file}")
+            
+        except Exception as e:
+            self.logger.warning(f"🐛 Failed to generate debug summary: {e}")

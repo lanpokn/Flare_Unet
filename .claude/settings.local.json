@@ -16,7 +16,8 @@
       "Bash(mkdir:*)",
       "Bash(mamba run:*)",
       "Bash(conda:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

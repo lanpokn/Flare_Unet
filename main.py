@@ -45,22 +45,48 @@ class EventVoxelPipeline:
         )
         return logging.getLogger(__name__)
     
-    def train_mode(self, config_path: str) -> int:
+    def train_mode(self, config_path: str, debug: bool = False, debug_dir: str = 'debug_output') -> int:
         """
         Training mode - uses custom training system with pytorch-3dunet UNet3D model
         
         Args:
             config_path: Path to training configuration YAML
+            debug: Enable debug mode with detailed visualization
+            debug_dir: Directory for debug visualizations
             
         Returns:
             Exit code (0 = success, non-zero = error)
         """
-        self.logger.info("=== EVENT-VOXEL CUSTOM TRAINING MODE ===")
+        mode_str = "DEBUG TRAINING" if debug else "CUSTOM TRAINING"
+        self.logger.info(f"=== EVENT-VOXEL {mode_str} MODE ===")
         
         try:
             # Load and validate training configuration
             config = self.config_loader.load_train_config(config_path)
             self.logger.info(f"Loaded training config from: {config_path}")
+            
+            # Inject debug configuration
+            if debug:
+                config['debug'] = {
+                    'enabled': True,
+                    'debug_dir': debug_dir,
+                    'max_iterations': 2,  # Only run 1-2 iterations in debug mode
+                    'max_epochs': 1       # Only 1 epoch in debug mode
+                }
+                
+                # Override training epochs for debug
+                config['trainer']['max_num_epochs'] = 1
+                
+                # Create debug output directory
+                debug_path = Path(debug_dir)
+                debug_path.mkdir(parents=True, exist_ok=True)
+                
+                self.logger.info(f"🐛 DEBUG MODE ENABLED")
+                self.logger.info(f"🐛 Debug output: {debug_dir}")
+                self.logger.info(f"🐛 Will run max {config['debug']['max_iterations']} iterations only")
+                self.logger.info(f"🐛 9 visualization folders will be generated per iteration")
+            else:
+                config['debug'] = {'enabled': False}
             
             self.logger.info("Starting custom training system...")
             self.logger.info(f"Model: {config['model']['name']} ({config['model']['f_maps']} feature maps)")
@@ -435,6 +461,10 @@ Examples:
     train_parser = subparsers.add_parser('train', help='Train denoising model')
     train_parser.add_argument('--config', required=True, 
                             help='Path to training configuration YAML')
+    train_parser.add_argument('--debug', action='store_true',
+                            help='Enable debug mode with detailed visualization (runs only 1-2 iterations)')
+    train_parser.add_argument('--debug-dir', type=str, default='debug_output',
+                            help='Directory for debug visualizations (default: debug_output)')
     
     # Testing mode
     test_parser = subparsers.add_parser('test', help='Evaluate trained model')
@@ -461,7 +491,7 @@ Examples:
     
     # Execute requested mode
     if args.mode == 'train':
-        return pipeline.train_mode(args.config)
+        return pipeline.train_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
     elif args.mode == 'test':
         return pipeline.test_mode(args.config)
     elif args.mode == 'inference':
