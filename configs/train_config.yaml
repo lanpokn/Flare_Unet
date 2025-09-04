@@ -35,7 +35,8 @@ model:
   out_channels: 1           # Single channel output (deflared voxel)
   
   # Architecture parameters (全部传递给TrueResidualUNet3D)
-  f_maps: [16, 32, 64]      # 特征图数量
+  # f_maps: [16, 32, 64]      # 特征图数量
+  f_maps: [32, 64, 128]
   num_levels: 3             # 网络深度  
   layer_order: gcr          # Group normalization + Conv + ReLU
   num_groups: 8             # GroupNorm分组数 (重要参数!)
@@ -81,7 +82,7 @@ trainer:
   
   # Validation and logging
   validate_after_iters: 1250  # 每1250个iteration验证一次 (快速反馈)
-  log_after_iters: 250       # 每1个iteration记录日志到tensorboard
+  log_after_iters: 100       # 每1个iteration记录日志到tensorboard
   max_num_workers: 0         # 单线程避免并发问题
   
   # Early stopping (optional)

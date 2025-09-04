@@ -118,48 +118,44 @@ model.final_activation = nn.Identity()  # 强制替换为恒等映射
 ### 模型选择与参数量分析
 **推荐**: `TrueResidualUNet3D` (真正残差学习)
 
-**当前配置 vs 官方默认对比**:
-| 参数 | 官方默认 | 我们的配置 | 原因 |
-|-----|---------|----------|------|
-| `f_maps` | 64 | [16, 32, 64] | 渐进式特征图，更efficient |
-| `num_levels` | 5 | 3 | 避免过拟合，适合数据复杂度 |
-| `num_groups` | 8 | 8 ✅ | GroupNorm标准设置 |
-| `layer_order` | 'gcr' | 'gcr' ✅ | GroupNorm+Conv+ReLU |
-| `dropout_prob` | 0.1 | 0.1 ✅ | 标准正则化 |
-| **总参数量** | **1.13亿** | **43万** | **节省99.6%** |
+**当前配置 vs 官方默认对比** - **已升级到中等规模**:
+| 参数 | 官方默认 | 之前轻量配置 | **当前中等配置** | 原因 |
+|-----|---------|------------|---------------|------|
+| `f_maps` | 64 | [16, 32, 64] | **[32, 64, 128]** ✅ | **4倍特征图容量，更强学习能力** |
+| `num_levels` | 5 | 3 | **3** | 平衡深度与效率 |
+| `num_groups` | 8 | 8 ✅ | **8** ✅ | GroupNorm标准设置 |
+| `layer_order` | 'gcr' | 'gcr' ✅ | **'gcr'** ✅ | GroupNorm+Conv+ReLU |
+| `dropout_prob` | 0.1 | 0.1 ✅ | **0.1** ✅ | 标准正则化 |
+| **总参数量** | **1.13亿** | 43万 | **~173万** | **4倍学习能力提升** |
 
 ```yaml
-# 当前优化配置 (43万参数)
+# 当前中等规模配置 (~173万参数) - 2025-01-03已部署
 model:
   name: 'TrueResidualUNet3D'
   backbone: 'ResidualUNet3D'
-  f_maps: [16, 32, 64]       # 渐进式特征图
-  num_levels: 3              # 3层深度
+  f_maps: [32, 64, 128]      # 4倍特征图容量，更强学习能力
+  num_levels: 3              # 保持3层深度，平衡效率
   layer_order: 'gcr'         # GroupNorm + Conv + ReLU
   num_groups: 8              # GroupNorm分组
   conv_padding: 1            # 卷积padding
   dropout_prob: 0.1          # Dropout正则化
 ```
 
-**⚠️ 潜在风险**: 43万参数可能对复杂炫光模式学习能力不足
+**✅ 升级优势**: 173万参数提供4倍学习能力，适合复杂炫光模式
 
-**备选配置建议**:
+**进一步扩展建议**:
 ```yaml
-# 中等规模配置 (173万参数，推荐先测试)
-f_maps: [32, 64, 128]       # 4倍特征图容量
-num_levels: 4               # 更深的特征提取
-
 # 大规模配置 (690万参数，复杂炫光场景)
 f_maps: [64, 128, 256]      # 16倍特征图容量  
 num_levels: 4               # 深度特征学习
 ```
 
 **参数量对比分析**:
-- **当前**: 43万参数 → 可能学习能力不足 ⚠️
-- **中等**: 173万参数 (4倍) → 平衡性能与效率 ✅
+- **之前轻量**: 43万参数 → 可能学习能力不足 ⚠️
+- **当前中等**: 173万参数 (4倍) → **平衡性能与效率** ✅ **已部署**
 - **大规模**: 690万参数 (16倍) → 强学习能力，需更多数据 
 
-**GPU内存全部友好** (RTX 4060): 所有配置都 <1GB 模型权重
+**GPU内存全部友好** (RTX 4060): 所有配置都 <2GB 模型权重
 
 ### 训练参数
 - **数据**: 500个H5文件对 → 2500个训练样本  
@@ -201,6 +197,26 @@ python main.py test --config configs/test_config.yaml
 python main.py inference --config configs/inference_config.yaml \
   --input noisy_events.h5 --output deflared_events.h5
 ```
+
+### 训练日志可视化 - **2025-01-03新增**
+```bash
+# 基础使用 (推荐) - 自动生成loss曲线
+python visualize_training_logs.py
+
+# 自定义日志路径和输出目录
+python visualize_training_logs.py --log_dir logs/event_voxel_denoising --output_dir debug_output
+
+# 详细分析模式 (生成额外的详细分析图表)
+python visualize_training_logs.py --detailed
+```
+
+**功能特性**:
+- ✅ **自动TensorBoard日志解析**: 支持401个batch loss + 5个epoch loss数据点
+- ✅ **多指标监控**: 训练loss + 学习率曲线 + epoch统计
+- ✅ **智能可视化**: 对数刻度显示 + 平滑曲线 + 最佳性能标注
+- ✅ **统一输出**: 所有图表保存到`debug_output/training_loss_curves.png`
+- ✅ **英文界面**: 避免字体乱码问题，专业展示
+- ✅ **无弹窗模式**: 直接保存，不弹出显示窗口
 
 ## 最新状态 - **2025-01-03**
 
@@ -257,27 +273,27 @@ python main.py train --config configs/train_config.yaml --debug --debug-dir my_c
 
 **配置文件建议**:
 
-**选择1：当前轻量配置** (configs/train_config.yaml):
+**当前部署配置** (configs/train_config.yaml - **已升级**):
 ```yaml
 model:
   name: 'TrueResidualUNet3D'
   backbone: 'ResidualUNet3D'  
-  f_maps: [16, 32, 64]        # 43万参数，快速训练
-  num_levels: 3
+  f_maps: [32, 64, 128]       # 173万参数，4倍学习能力 ✅已部署
+  num_levels: 3               # 保持高效深度
   # ... 其他参数
 ```
 
-**选择2：推荐中等配置** (更强学习能力):
+**进一步扩展选项** (如需更强学习能力):
 ```yaml  
 model:
   name: 'TrueResidualUNet3D'
   backbone: 'ResidualUNet3D'
-  f_maps: [32, 64, 128]       # 173万参数，平衡性能
-  num_levels: 4               # 稍深一点
+  f_maps: [32, 64, 128]       # 当前配置 (173万参数)
+  num_levels: 4               # 可选择更深 → ~250万参数
   # ... 其他参数保持不变
 ```
 
-**选择3：大规模配置** (复杂炫光场景):
+**大规模配置** (复杂炫光场景):
 ```yaml
 model:
   name: 'TrueResidualUNet3D' 
@@ -291,12 +307,14 @@ model:
 - 6-8个综合可视化文件夹（TrueResidualUNet3D多2个残差文件夹）
 - 智能残差分析和恒等映射验证  
 - debug_summary.txt调试总结文件
+- **训练loss可视化图表** (`training_loss_curves.png`) - **2025-01-03新增**
 - 任何其他debug相关的临时文件和日志
 
 **实现位置**:
 - `true_residual_wrapper.py`: TrueResidualUNet3D实现+零初始化
 - `src/training/training_factory.py`: 模型创建支持两种架构
 - `src/training/custom_trainer.py`: 智能debug可视化钩子
+- `visualize_training_logs.py`: **训练loss可视化工具** - **2025-01-03新增**
 
 ## 验证结果与技术突破
 

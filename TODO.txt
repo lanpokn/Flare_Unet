@@ -32,3 +32,5 @@ checkpoint, debug模式， 参数与显存的关系，阅读记忆找问题. val
 
   f_maps: [32, 64, 128]        # 特征图通道数 (3层encoder: 32→64→128)
   num_levels: 3               # UNet层数 (与EventZoom一致)
+
+看看encode，decode占了多长时间。以及训练时不用decode,debug时注意模型不要永远恒等
