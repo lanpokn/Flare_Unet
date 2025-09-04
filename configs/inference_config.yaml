@@ -1,5 +1,6 @@
 # Inference Configuration for Standalone Event Deflare
 # Used for processing single H5 event files without ground truth
+# Updated for local data_simu paths
 
 # Model configuration (must match trained model exactly)
 model:

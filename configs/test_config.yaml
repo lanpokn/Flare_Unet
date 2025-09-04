@@ -3,9 +3,9 @@
 
 # Data loading configuration for test (match train config format)
 loaders:
-  # Test data paths (SAME as train validation paths)
-  val_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events_test"
-  val_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events_test"
+  # Test data paths (SAME as train validation paths) - Local data_simu
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_flare_events_test"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_light_events_test"
   
   # DataLoader parameters
   batch_size: 1           # Process each sample individually

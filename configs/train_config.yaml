@@ -3,11 +3,11 @@
 
 # Data loading configuration for custom training system
 loaders:
-  # Real deflare dataset paths (WSL format)
-  train_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events"
-  train_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events"
-  val_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events_test"
-  val_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events_test"
+  # Real deflare dataset paths (Local data_simu)
+  train_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_flare_events"
+  train_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_light_events"
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_flare_events_test"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_light_events_test"
   
   # DataLoader parameters
   batch_size: 1           # 单样本batch (避免显存爆炸)
@@ -35,13 +35,15 @@ model:
   out_channels: 1           # Single channel output (deflared voxel)
   
   # Architecture parameters (全部传递给TrueResidualUNet3D)
-  # f_maps: [16, 32, 64]      # 特征图数量
-  f_maps: [32, 64, 128]
-  num_levels: 3             # 网络深度  
+  # f_maps: [16, 32, 64]      # 特征图数量 (轻量配置)
+  f_maps: [32, 64, 128]    # 当前配置 (173万参数) - 可能容量不足
+  # f_maps: [48, 96, 144]      # 升级配置 (400万参数) - 平衡性能与显存
+  num_levels: 3              # 网络深度  
   layer_order: gcr          # Group normalization + Conv + ReLU
   num_groups: 8             # GroupNorm分组数 (重要参数!)
   conv_padding: 1           # 卷积padding
   dropout_prob: 0.1         # Dropout概率
+  use_checkpoint: true      # ✅ 启用gradient checkpointing: -60-80%显存, +20-50%时间
   
   # 注意: final_sigmoid在TrueResidualUNet3D中硬编码为False，然后替换为Identity()
   

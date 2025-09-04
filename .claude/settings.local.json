@@ -17,7 +17,10 @@
       "Bash(mamba run:*)",
       "Bash(conda:*)",
       "Bash(pkill:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:infohub.delltechnologies.com)"
     ],
     "deny": []
   }

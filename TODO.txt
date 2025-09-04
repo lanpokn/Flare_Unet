@@ -34,3 +34,5 @@ checkpoint, debug模式， 参数与显存的关系，阅读记忆找问题. val
   num_levels: 3               # UNet层数 (与EventZoom一致)
 
 看看encode，decode占了多长时间。以及训练时不用decode,debug时注意模型不要永远恒等
+
+后续最重要的是完成主实验，仿真测试集（已有）和真实测试集，以及度量指标

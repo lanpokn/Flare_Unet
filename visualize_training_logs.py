@@ -114,10 +114,10 @@ def create_loss_plots(data, output_dir):
             ax1.plot(smooth_steps, smoothed, 'r-', linewidth=2, label=f'Smoothed (window={window_size})')
         
         ax1.set_xlabel('Training Iteration')
-        ax1.set_ylabel('Loss')
-        ax1.set_title('Training Loss Curve (Batch Level)', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Loss (log scale)')
+        ax1.set_title('Training Loss Curve (Batch Level) - Log Scale', fontsize=14, fontweight='bold')
+        ax1.set_yscale('log')  # Use log scale for better visualization of training dynamics
         ax1.legend()
-        # Use linear scale to see actual loss values more clearly
         
         # Add statistics info
         min_loss = min(losses)
@@ -138,17 +138,16 @@ def create_loss_plots(data, output_dir):
         
         ax2.plot(steps, losses, 'g-o', linewidth=2, markersize=6, label='Training Loss (per epoch)')
         ax2.set_xlabel('Epoch')
-        ax2.set_ylabel('Loss')
-        ax2.set_title('Epoch-level Loss', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Loss (log scale)')
+        ax2.set_title('Epoch-level Loss - Log Scale', fontsize=12, fontweight='bold')
+        ax2.set_yscale('log')  # Use log scale for better visualization
         ax2.legend()
         
-        # Annotate best epoch
+        # Add best epoch info as text (without arrow)
         min_idx = np.argmin(losses)
-        ax2.annotate(f'Best: {losses[min_idx]:.4f}', 
-                    xy=(steps[min_idx], losses[min_idx]),
-                    xytext=(10, 10), textcoords='offset points',
-                    arrowprops=dict(arrowstyle='->', color='red'),
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.8))
+        ax2.text(0.02, 0.98, f'Best: {losses[min_idx]:.4f}', 
+                transform=ax2.transAxes, verticalalignment='top',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.8))
     else:
         ax2.text(0.5, 0.5, 'No epoch loss data found', 
                 ha='center', va='center', transform=ax2.transAxes)
