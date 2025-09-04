@@ -138,9 +138,7 @@ class EventVoxelPipeline:
             if debug:
                 config['debug'] = {
                     'enabled': True,
-                    'debug_dir': debug_dir,
-                    'max_iterations': 2,  # Only run 1-2 iterations in debug mode
-                    'max_batches': 2      # Limit test batches for debug
+                    'debug_dir': debug_dir
                 }
                 
                 # Create debug output directory
@@ -149,8 +147,8 @@ class EventVoxelPipeline:
                 
                 self.logger.info(f"🐛 DEBUG MODE ENABLED")
                 self.logger.info(f"🐛 Debug output: {debug_dir}")
-                self.logger.info(f"🐛 Will run max {config['debug']['max_iterations']} batches only")
-                self.logger.info(f"🐛 6-8 visualization folders will be generated per batch")
+                self.logger.info(f"🐛 Smart sampling: visualizing every 5th batch (1st segment of each file)")
+                self.logger.info(f"🐛 Expected visualizations: ~52 folders (1 per file)")
             else:
                 config['debug'] = {'enabled': False}
             
@@ -211,24 +209,22 @@ class EventVoxelPipeline:
             num_batches = 0
             criterion = torch.nn.MSELoss()
             
-            # Debug模式限制测试样本数
+            # Test模式：处理所有数据，debug模式只影响可视化
             debug_config = config.get('debug', {})
-            max_test_batches = debug_config.get('max_batches', len(test_loader)) if debug_config.get('enabled', False) else len(test_loader)
             
-            self.logger.info(f"Evaluating on {min(len(test_dataset), max_test_batches)} samples...")
+            self.logger.info(f"Evaluating on {len(test_dataset)} samples...")
             
             with torch.no_grad():
                 for batch_idx, batch in enumerate(test_loader):
-                    # Debug模式下限制batch数量
-                    if debug_config.get('enabled', False) and batch_idx >= max_test_batches:
-                        self.logger.info(f"🐛 DEBUG MODE: Stopping after {max_test_batches} batches")
-                        break
                         
                     inputs = batch['raw'].to(device)
                     targets = batch['label'].to(device)
                     
-                    # Debug可视化钩子 - 在数据产生的地方触发 (复用train模式的代码)
-                    if debug_config.get('enabled', False) and batch_idx < 2:  # 只对前2个batch做可视化
+                    # Debug可视化钩子 - 每5个batch可视化第1个 (batch_idx % 5 == 0)
+                    # 因为每5个batch来自同一个文件，相似性高，只需要可视化每个文件的第1个segment
+                    if debug_config.get('enabled', False) and batch_idx % 5 == 0:
+                        file_idx = batch_idx // 5  # 文件索引
+                        self.logger.info(f"🐛 Visualizing file {file_idx + 1} (batch {batch_idx})")
                         self._trigger_test_debug_visualization(
                             batch_idx, inputs, targets, batch, 
                             debug_config['debug_dir'], batch_idx  # 使用batch_idx作为epoch
@@ -236,8 +232,8 @@ class EventVoxelPipeline:
                     
                     outputs = model(inputs)
                     
-                    # Debug可视化钩子 - 模型输出后 (复用train模式的代码)
-                    if debug_config.get('enabled', False) and batch_idx < 2:
+                    # Debug可视化钩子 - 每5个batch可视化第1个
+                    if debug_config.get('enabled', False) and batch_idx % 5 == 0:
                         self._trigger_test_model_output_visualization(
                             batch_idx, inputs, outputs, debug_config['debug_dir'], batch_idx, model
                         )
@@ -247,8 +243,8 @@ class EventVoxelPipeline:
                     total_loss += loss.item()
                     num_batches += 1
                     
-                    if batch_idx % 10 == 0 or debug_config.get('enabled', False):
-                        self.logger.info(f"Batch {batch_idx}/{min(len(test_loader), max_test_batches)}, Loss: {loss.item():.6f}")
+                    if batch_idx % 10 == 0 or (debug_config.get('enabled', False) and batch_idx < 5):
+                        self.logger.info(f"Batch {batch_idx}/{len(test_loader)}, Loss: {loss.item():.6f}")
             
             avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
             
