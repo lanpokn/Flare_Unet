@@ -35,11 +35,13 @@ model:
   out_channels: 1           # Single channel output (deflared voxel)
   
   # Architecture parameters (全部传递给TrueResidualUNet3D)
-  f_maps: [32, 64, 128]    # 当前配置 (173万参数) - 可能容量不足
-  num_levels: 3              # 网络深度  
-  # f_maps: [32, 64, 128，256]    # 服务器上用更大的模型
-  # num_levels: 4              # 服务器上用更大的模型 
+  f_maps: [32, 64, 128, 256]    # 当前配置: 4层, ~250万参数
+  num_levels: 4                 # 最大深度4层 (5层会导致尺寸过小bug)
 
+  # 服务器版本 (大显存环境) 
+  # f_maps: [64, 128, 256, 512]  # 服务器配置: 4层, ~2800万参数
+  # num_levels: 4                # 固定4层深度 (避免5层尺寸bug)
+  
   layer_order: gcr          # Group normalization + Conv + ReLU
   num_groups: 8             # GroupNorm分组数 (重要参数!)
   conv_padding: 1           # 卷积padding
