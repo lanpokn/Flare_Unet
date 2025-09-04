@@ -6,7 +6,6 @@
 
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint
 from pytorch3dunet.unet3d.model import ResidualUNet3D, UNet3D
 
 class TrueResidualUNet3D(nn.Module):
@@ -27,15 +26,12 @@ class TrueResidualUNet3D(nn.Module):
                  num_groups=8,
                  conv_padding=1,
                  dropout_prob=0.1,
-                 use_checkpoint=False,
                  **kwargs):
         """
         Args:
             backbone: 'ResidualUNet3D' or 'UNet3D'
-            use_checkpoint: Enable gradient checkpointing to save 60-80% GPU memory
         """
         super().__init__()
-        self.use_checkpoint = use_checkpoint
         
         if backbone == 'ResidualUNet3D':
             self.backbone = ResidualUNet3D(
@@ -76,36 +72,22 @@ class TrueResidualUNet3D(nn.Module):
         print(f"TrueResidualUNet3D created with {backbone} backbone")
         print(f"Architecture: output = input + {backbone}(input)")
         print(f"Zero-initialized final layer for perfect identity mapping")
-        if self.use_checkpoint:
-            print(f"✅ Gradient checkpointing enabled: -60-80% GPU memory, +20-50% training time")
     
     def forward(self, x):
         """
-        真正的残差前向传播 with optional gradient checkpointing:
+        真正的残差前向传播:
         output = input + residual_learned
-        
-        Gradient checkpointing trades computation time for memory:
-        - Training: Uses checkpointing if enabled (saves 60-80% GPU memory)
-        - Inference: Always uses standard forward (no memory pressure)
         """
-        if self.use_checkpoint and self.training:
-            # 训练模式 + checkpointing: 重新计算换内存
-            residual = checkpoint(self.backbone, x)
-        else:
-            # 推理模式 或 标准训练: 直接前向传播
-            residual = self.backbone(x)
+        # 学习残差
+        residual = self.backbone(x)
         
-        # 残差连接 (总是相同)
+        # 残差连接
         output = x + residual
         
         return output
     
     def get_residual(self, x):
-        """
-        获取学习到的残差，用于调试分析
-        注意: 调试时总是使用标准前向传播，确保结果一致性
-        """
-        # 调试模式总是使用标准前向，避免checkpointing的重复计算影响
+        """获取学习到的残差，用于调试分析"""
         return self.backbone(x)
     
     def _zero_init_residual_layer(self):
