@@ -1,47 +1,43 @@
 # Test/Evaluation Configuration for Event-Voxel Deflare
 # Used for evaluating trained models on test datasets
 
-# Data loading configuration
+# Data loading configuration for test (match train config format)
 loaders:
-  # Test dataset configuration
-  dataset: EventVoxelDataset
-  # Test data paths (using actual test data directories)
-  test_path:
-    noisy: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events_test"
-    clean: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events_test"
+  # Test data paths (SAME as train validation paths)
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_flare_events_test"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/main/output/data_simu/physics_method/background_with_light_events_test"
   
-  # DataLoader parameters for testing
-  batch_size: 1           # Usually 1 for testing to process each sample individually
-  num_workers: 4          # Number of data loading workers
+  # DataLoader parameters
+  batch_size: 1           # Process each sample individually
+  num_workers: 0          # Single thread to avoid concurrent issues
   
-  # Preprocessing (should match training)
-  transformer:
-    test:
-      - name: Normalize   # Same normalization as training
+  # Event-Voxel conversion parameters (MUST match training)
+  sensor_size: [480, 640]         # DSEC sensor resolution
+  segment_duration_us: 20000      # 20ms per segment
+  num_bins: 8                     # 8 temporal bins per segment
+  num_segments: 5                 # 5 segments per 100ms file
+  
+  # Data transforms
+  transform: null
 
-# Dataset configuration (must match training)
-dataset:
-  sensor_size: [480, 640]      # Sensor resolution (H, W)
-  segment_duration_us: 20000   # 20ms per segment
-  num_bins: 8                  # 8 temporal bins per segment  
-  num_segments: 5              # 5 segments per 100ms file
+# Remove duplicate dataset section (already in loaders)
 
-# Model configuration (must match training model exactly)
+# Model configuration (MUST match training model exactly)
 model:
-  name: ResidualUNet3D
+  name: TrueResidualUNet3D  # ✅ Match training: 真正残差学习
+  backbone: ResidualUNet3D  # 底层网络类型
   # Model architecture (MUST match training config exactly)
   in_channels: 1
   out_channels: 1
-  f_maps: 8                 # Match training: reduced from 32 to 8
+  f_maps: [32, 64, 128]     # ✅ Match training: 173万参数配置
   layer_order: gcr
-  num_groups: 2             # Match training: reduced from 8 to 2
-  num_levels: 2             # Match training: reduced from 4 to 2
-  final_sigmoid: true       # 强制设为true，代码中会替换为Identity
-  conv_kernel_size: 3
-  pool_kernel_size: 2
+  num_groups: 8             # ✅ Match training: 标准GroupNorm分组
+  num_levels: 3             # ✅ Match training: 3层深度
+  conv_padding: 1           # Match training
+  dropout_prob: 0.1         # Match training
   
-  # Path to trained model checkpoint
-  path: checkpoints/event_voxel_deflare/best_checkpoint.pytorch
+  # Path to trained model checkpoint (2500 iteration)
+  path: checkpoints/event_voxel_deflare/checkpoint_epoch_0000_iter_002500.pth
 
 # Predictor configuration
 predictor:

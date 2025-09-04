@@ -117,7 +117,7 @@ def create_loss_plots(data, output_dir):
         ax1.set_ylabel('Loss')
         ax1.set_title('Training Loss Curve (Batch Level)', fontsize=14, fontweight='bold')
         ax1.legend()
-        ax1.set_yscale('log')  # Log scale for better loss visualization
+        # Use linear scale to see actual loss values more clearly
         
         # Add statistics info
         min_loss = min(losses)
@@ -165,7 +165,7 @@ def create_loss_plots(data, output_dir):
         ax3.set_ylabel('Learning Rate')
         ax3.set_title('Learning Rate Schedule', fontsize=12, fontweight='bold')
         ax3.legend()
-        ax3.set_yscale('log')  # Log scale for learning rate display
+        ax3.set_yscale('log')  # Keep log scale for learning rate (makes sense here)
     else:
         ax3.text(0.5, 0.5, 'No learning rate data found', 
                 ha='center', va='center', transform=ax3.transAxes)

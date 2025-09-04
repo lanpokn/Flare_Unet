@@ -114,22 +114,45 @@ class EventVoxelPipeline:
             self.logger.error(traceback.format_exc())
             return 1
     
-    def test_mode(self, config_path: str) -> int:
+    def test_mode(self, config_path: str, debug: bool = False, debug_dir: str = 'debug_output') -> int:
         """
-        Testing mode - evaluates trained model on test dataset
+        Testing mode - evaluates trained model on test dataset with optional debug visualization
         
         Args:
             config_path: Path to test configuration YAML
+            debug: Enable debug mode with detailed visualization
+            debug_dir: Directory for debug visualizations
             
         Returns:
             Exit code (0 = success, non-zero = error)
         """
-        self.logger.info("=== EVENT-VOXEL TESTING MODE ===")
+        mode_str = "DEBUG TESTING" if debug else "TESTING"
+        self.logger.info(f"=== EVENT-VOXEL {mode_str} MODE ===")
         
         try:
             # Load and validate test configuration  
             config = self.config_loader.load_test_config(config_path)
             self.logger.info(f"Loaded test config from: {config_path}")
+            
+            # Inject debug configuration (same as train mode)
+            if debug:
+                config['debug'] = {
+                    'enabled': True,
+                    'debug_dir': debug_dir,
+                    'max_iterations': 2,  # Only run 1-2 iterations in debug mode
+                    'max_batches': 2      # Limit test batches for debug
+                }
+                
+                # Create debug output directory
+                debug_path = Path(debug_dir)
+                debug_path.mkdir(parents=True, exist_ok=True)
+                
+                self.logger.info(f"🐛 DEBUG MODE ENABLED")
+                self.logger.info(f"🐛 Debug output: {debug_dir}")
+                self.logger.info(f"🐛 Will run max {config['debug']['max_iterations']} batches only")
+                self.logger.info(f"🐛 6-8 visualization folders will be generated per batch")
+            else:
+                config['debug'] = {'enabled': False}
             
             # Verify model checkpoint exists
             model_path = config['model']['path']
@@ -138,14 +161,37 @@ class EventVoxelPipeline:
                 return 1
             
             self.logger.info("Starting custom evaluation...")
-            self.logger.info(f"Model: {model_path}")
+            self.logger.info(f"Model: {config['model']['name']} ({config['model']['f_maps']} feature maps)")
+            self.logger.info(f"Checkpoint: {model_path}")
             
             # 创建训练工厂（仅用于创建模型和数据集）
             training_factory = TrainingFactory(config)
             
             # 创建模型和数据集
             model = training_factory.create_model()
-            _, test_dataset = training_factory.create_datasets()  # 使用val作为test
+            # For test mode: only create validation dataset (which is our test data)
+            try:
+                _, test_dataset = training_factory.create_datasets()  # 使用val作为test
+            except:
+                # If train dataset creation fails, just create val dataset directly
+                from src.datasets.event_voxel_dataset import EventVoxelDataset
+                loader_config = config.get('loaders', {})
+                val_noisy_dir = loader_config.get('val_noisy_dir')
+                val_clean_dir = loader_config.get('val_clean_dir')
+                sensor_size = tuple(loader_config.get('sensor_size', [480, 640]))
+                segment_duration_us = loader_config.get('segment_duration_us', 20000)
+                num_bins = loader_config.get('num_bins', 8)
+                num_segments = loader_config.get('num_segments', 5)
+                
+                test_dataset = EventVoxelDataset(
+                    noisy_events_dir=val_noisy_dir,
+                    clean_events_dir=val_clean_dir,
+                    sensor_size=sensor_size,
+                    segment_duration_us=segment_duration_us,
+                    num_bins=num_bins,
+                    num_segments=num_segments
+                )
+            
             _, test_loader = training_factory.create_dataloaders(test_dataset, test_dataset)
             
             # 加载checkpoint
@@ -165,21 +211,44 @@ class EventVoxelPipeline:
             num_batches = 0
             criterion = torch.nn.MSELoss()
             
-            self.logger.info(f"Evaluating on {len(test_dataset)} samples...")
+            # Debug模式限制测试样本数
+            debug_config = config.get('debug', {})
+            max_test_batches = debug_config.get('max_batches', len(test_loader)) if debug_config.get('enabled', False) else len(test_loader)
+            
+            self.logger.info(f"Evaluating on {min(len(test_dataset), max_test_batches)} samples...")
             
             with torch.no_grad():
                 for batch_idx, batch in enumerate(test_loader):
+                    # Debug模式下限制batch数量
+                    if debug_config.get('enabled', False) and batch_idx >= max_test_batches:
+                        self.logger.info(f"🐛 DEBUG MODE: Stopping after {max_test_batches} batches")
+                        break
+                        
                     inputs = batch['raw'].to(device)
                     targets = batch['label'].to(device)
                     
+                    # Debug可视化钩子 - 在数据产生的地方触发 (复用train模式的代码)
+                    if debug_config.get('enabled', False) and batch_idx < 2:  # 只对前2个batch做可视化
+                        self._trigger_test_debug_visualization(
+                            batch_idx, inputs, targets, batch, 
+                            debug_config['debug_dir'], batch_idx  # 使用batch_idx作为epoch
+                        )
+                    
                     outputs = model(inputs)
+                    
+                    # Debug可视化钩子 - 模型输出后 (复用train模式的代码)
+                    if debug_config.get('enabled', False) and batch_idx < 2:
+                        self._trigger_test_model_output_visualization(
+                            batch_idx, inputs, outputs, debug_config['debug_dir'], batch_idx, model
+                        )
+                    
                     loss = criterion(outputs, targets)
                     
                     total_loss += loss.item()
                     num_batches += 1
                     
-                    if batch_idx % 10 == 0:
-                        self.logger.info(f"Batch {batch_idx}/{len(test_loader)}, Loss: {loss.item():.6f}")
+                    if batch_idx % 10 == 0 or debug_config.get('enabled', False):
+                        self.logger.info(f"Batch {batch_idx}/{min(len(test_loader), max_test_batches)}, Loss: {loss.item():.6f}")
             
             avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
             
@@ -434,6 +503,192 @@ class EventVoxelPipeline:
             self.logger.warning("Visualization not available (missing dependencies)")
         except Exception as e:
             self.logger.warning(f"Visualization failed: {e}")
+    
+    def _trigger_test_debug_visualization(self, batch_idx: int, inputs: torch.Tensor, targets: torch.Tensor, 
+                                        batch: dict, debug_dir: str, iteration: int):
+        """
+        Test模式的Debug可视化钩子 - 输入和目标数据可视化
+        复用train模式的可视化代码逻辑
+        """
+        try:
+            from pathlib import Path
+            
+            # 创建debug输出结构
+            iteration_dir = Path(debug_dir) / f"test_iter_{iteration:03d}"
+            iteration_dir.mkdir(parents=True, exist_ok=True)
+            
+            self.logger.info(f"🐛 TEST MODE: Generating debug visualizations for Batch {batch_idx}")
+            self.logger.info(f"🐛 Output directory: {iteration_dir}")
+            
+            # 获取第一个样本进行可视化 (batch_size通常为1)
+            input_voxel = inputs[0, 0].cpu()   # (8, H, W) - 去除batch和channel维度
+            target_voxel = targets[0, 0].cpu() # (8, H, W)
+            
+            # 从voxel解码回events进行可视化
+            from src.data_processing.decode import voxel_to_events
+            
+            # 解码input和target voxel为events
+            input_events_np = voxel_to_events(input_voxel, total_duration=20000, sensor_size=(480, 640))
+            target_events_np = voxel_to_events(target_voxel, total_duration=20000, sensor_size=(480, 640))
+            
+            # 使用专业可视化系统
+            from src.data_processing.professional_visualizer import visualize_events, visualize_voxel
+            
+            # === 输入数据可视化 ===
+            # 1. 输入事件3D+2D可视化
+            input_events_dir = iteration_dir / "1_input_events"
+            input_events_dir.mkdir(exist_ok=True)
+            visualize_events(input_events_np, sensor_size=(480, 640), output_dir=str(input_events_dir), 
+                           name="test_input_events", num_time_slices=8)
+            
+            # 3. 输入voxel可视化
+            input_voxel_dir = iteration_dir / "3_input_voxel"
+            input_voxel_dir.mkdir(exist_ok=True)
+            visualize_voxel(input_voxel, sensor_size=(480, 640), output_dir=str(input_voxel_dir), 
+                          name="test_input_voxel", duration_ms=20)
+            
+            # === 真值数据可视化 ===
+            # 4. 真值事件3D+2D可视化
+            target_events_dir = iteration_dir / "4_target_events"
+            target_events_dir.mkdir(exist_ok=True)
+            visualize_events(target_events_np, sensor_size=(480, 640), output_dir=str(target_events_dir), 
+                           name="test_target_events", num_time_slices=8)
+            
+            # 6. 真值voxel可视化
+            target_voxel_dir = iteration_dir / "6_target_voxel"
+            target_voxel_dir.mkdir(exist_ok=True)
+            visualize_voxel(target_voxel, sensor_size=(480, 640), output_dir=str(target_voxel_dir), 
+                          name="test_target_voxel", duration_ms=20)
+            
+            self.logger.info(f"🐛 TEST: Generated input and target visualizations (1,3,4,6/9) in {iteration_dir}")
+            
+        except Exception as e:
+            self.logger.warning(f"🐛 TEST: Debug visualization failed: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+    
+    def _trigger_test_model_output_visualization(self, batch_idx: int, inputs: torch.Tensor, outputs: torch.Tensor, 
+                                               debug_dir: str, iteration: int, model):
+        """
+        Test模式的Debug可视化钩子 - 模型输出可视化
+        复用train模式的可视化代码逻辑，支持真正残差学习
+        """
+        try:
+            from pathlib import Path
+            
+            iteration_dir = Path(debug_dir) / f"test_iter_{iteration:03d}"
+            
+            # 获取第一个样本的数据
+            input_voxel = inputs[0, 0].cpu()   # (8, H, W)
+            output_voxel = outputs[0, 0].cpu()  # (8, H, W) - 这是最终输出
+            
+            # 检查是否是真正的残差学习模型
+            is_true_residual = hasattr(model, 'get_residual') or 'TrueResidualUNet3D' in str(type(model))
+            
+            if is_true_residual:
+                # 对于真正残差学习，计算残差
+                residual_voxel = output_voxel - input_voxel  # output = input + residual
+                
+                self.logger.info(f"🐛 TEST: True residual learning detected:")
+                self.logger.info(f"🐛   Input mean: {input_voxel.mean():.4f}, std: {input_voxel.std():.4f}")
+                self.logger.info(f"🐛   Residual mean: {residual_voxel.mean():.4f}, std: {residual_voxel.std():.4f}")
+                self.logger.info(f"🐛   Output mean: {output_voxel.mean():.4f}, std: {output_voxel.std():.4f}")
+                self.logger.info(f"🐛   Identity check: output ≈ input + residual = {torch.allclose(output_voxel, input_voxel + residual_voxel, atol=1e-6)}")
+                
+                # 残差可视化
+                residual_voxel_dir = iteration_dir / "8_residual_voxel"
+                residual_voxel_dir.mkdir(exist_ok=True)
+                
+                from src.data_processing.professional_visualizer import visualize_voxel
+                visualize_voxel(residual_voxel, sensor_size=(480, 640), output_dir=str(residual_voxel_dir), 
+                              name="test_residual_voxel", duration_ms=20)
+                
+                # 残差Events可视化 (如果残差有意义)
+                if residual_voxel.abs().sum() > 1e-6:
+                    from src.data_processing.decode import voxel_to_events
+                    residual_events_np = voxel_to_events(residual_voxel, total_duration=20000, sensor_size=(480, 640))
+                    
+                    residual_events_dir = iteration_dir / "8_residual_events"
+                    residual_events_dir.mkdir(exist_ok=True)
+                    
+                    from src.data_processing.professional_visualizer import visualize_events
+                    visualize_events(residual_events_np, sensor_size=(480, 640), output_dir=str(residual_events_dir), 
+                                   name="test_residual_events", num_time_slices=8)
+            
+            # 最终输出可视化 (无论哪种模型)
+            from src.data_processing.decode import voxel_to_events
+            output_events_np = voxel_to_events(output_voxel, total_duration=20000, sensor_size=(480, 640))
+            
+            from src.data_processing.professional_visualizer import visualize_events, visualize_voxel
+            
+            # 7. 最终输出事件可视化
+            output_events_dir = iteration_dir / "7_output_events"
+            output_events_dir.mkdir(exist_ok=True)
+            visualize_events(output_events_np, sensor_size=(480, 640), output_dir=str(output_events_dir), 
+                           name="test_output_events", num_time_slices=8)
+            
+            # 9. 最终输出voxel可视化
+            output_voxel_dir = iteration_dir / "9_output_voxel"
+            output_voxel_dir.mkdir(exist_ok=True)
+            visualize_voxel(output_voxel, sensor_size=(480, 640), output_dir=str(output_voxel_dir), 
+                          name="test_output_voxel", duration_ms=20)
+            
+            folder_count = "8" if is_true_residual else "6"
+            self.logger.info(f"🐛 TEST: Generated final output visualizations (7,9/{folder_count}) in {iteration_dir}")
+            if is_true_residual:
+                self.logger.info(f"🐛 TEST: Generated residual visualizations (8/8) in {iteration_dir}")
+                self.logger.info(f"🐛 TEST: All debug visualizations completed! (8 folders total: 1,3,4,6,7,8,9)")
+            else:
+                self.logger.info(f"🐛 TEST: All debug visualizations completed! (6 folders total: 1,3,4,6,7,9)")
+            
+            # 生成比较总结
+            self._generate_test_debug_summary(iteration_dir, batch_idx, iteration, is_true_residual)
+            
+        except Exception as e:
+            self.logger.warning(f"🐛 TEST: Model output visualization failed: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+    
+    def _generate_test_debug_summary(self, iteration_dir: Path, batch_idx: int, iteration: int, is_true_residual: bool = False):
+        """生成test模式的debug总结信息"""
+        try:
+            summary_file = iteration_dir / "debug_summary.txt"
+            
+            with open(summary_file, 'w') as f:
+                f.write(f"TEST Mode Debug Visualization Summary\n")
+                f.write(f"====================================\n")
+                f.write(f"Test Iteration: {iteration}\n")
+                f.write(f"Batch: {batch_idx}\n")
+                f.write(f"Mode: Testing (No Training)\n")
+                f.write(f"True Residual Learning: {'Yes' if is_true_residual else 'No'}\n")
+                
+                if is_true_residual:
+                    f.write(f"\n8 Visualization Folders (True Residual Learning):\n")
+                    f.write(f"1. 1_input_events/          - Input events (3D+2D+temporal) comprehensive\n")
+                    f.write(f"2. 3_input_voxel/           - Input voxel temporal bins\n")
+                    f.write(f"3. 4_target_events/         - Target events (3D+2D+temporal) comprehensive\n") 
+                    f.write(f"4. 6_target_voxel/          - Target voxel temporal bins\n")
+                    f.write(f"5. 7_output_events/         - Model output events (input + residual) comprehensive\n")
+                    f.write(f"6. 8_residual_voxel/        - Learned residual voxel temporal bins\n")
+                    f.write(f"7. 8_residual_events/       - Learned residual events (if non-zero)\n")
+                    f.write(f"8. 9_output_voxel/          - Model output voxel temporal bins\n")
+                else:
+                    f.write(f"\n6 Visualization Folders (Standard Model):\n")
+                    f.write(f"1. 1_input_events/          - Input events (3D+2D+temporal) comprehensive\n")
+                    f.write(f"2. 3_input_voxel/           - Input voxel temporal bins\n")
+                    f.write(f"3. 4_target_events/         - Target events (3D+2D+temporal) comprehensive\n") 
+                    f.write(f"4. 6_target_voxel/          - Target voxel temporal bins\n")
+                    f.write(f"5. 7_output_events/         - Model output events (3D+2D+temporal) comprehensive\n")
+                    f.write(f"6. 9_output_voxel/          - Model output voxel temporal bins\n")
+                
+                f.write(f"\nTesting Mode: Evaluate checkpoint performance on test data\n")
+                f.write(f"No training - only inference and visualization\n")
+                f.write(f"Same data processing pipeline as training validation\n")
+                
+            self.logger.info(f"🐛 TEST: Debug summary saved to {summary_file}")
+            
+        except Exception as e:
+            self.logger.warning(f"🐛 TEST: Failed to generate debug summary: {e}")
 
 
 def main():
@@ -470,6 +725,10 @@ Examples:
     test_parser = subparsers.add_parser('test', help='Evaluate trained model')
     test_parser.add_argument('--config', required=True,
                            help='Path to test configuration YAML')
+    test_parser.add_argument('--debug', action='store_true',
+                           help='Enable debug mode with detailed visualization (runs only 1-2 batches)')
+    test_parser.add_argument('--debug-dir', type=str, default='debug_output',
+                           help='Directory for debug visualizations (default: debug_output)')
     
     # Inference mode
     inference_parser = subparsers.add_parser('inference', help='Denoise event file')
@@ -493,7 +752,7 @@ Examples:
     if args.mode == 'train':
         return pipeline.train_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
     elif args.mode == 'test':
-        return pipeline.test_mode(args.config)
+        return pipeline.test_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
     elif args.mode == 'inference':
         return pipeline.inference_mode(args.config, args.input, args.output)
     else:
