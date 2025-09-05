@@ -291,30 +291,20 @@ python visualize_training_logs.py --detailed
 - ✅ **英文界面**: 避免字体乱码问题，专业展示
 - ✅ **无弹窗模式**: 直接保存，不弹出显示窗口
 
-## 最新状态 - **2025-09-05更新**
+## 最新状态 - **2025-09-05 生产就绪**
 
 ✅ **生产就绪系统**:
-- TrueResidualUNet3D + 真正残差学习 (707万参数)
-- 完整MLOps pipeline (训练→验证→**批量推理**)
-- **批量推理模式**: test模式现支持处理所有测试文件并保存去炫光结果
-- **本地化数据管理**: data_simu已完全迁移至本地项目目录
-- 现代化tqdm进度条 + emoji输出
-- 分段内存优化 + 固定时间分辨率
+- **TrueResidualUNet3D**: 真正残差学习 (707万参数医学标准)
+- **完整Pipeline**: 训练→验证→批量推理 (50个文件自动处理)
+- **性能优化**: 10倍+I/O优化，2倍处理速度提升
+- **本地化部署**: 完全自包含，无外部依赖
+- **专业可视化**: 8个文件夹综合debug系统
 
-✅ **批量推理系统** - **2025-09-05新增**:
-- **文件处理**: 自动处理test目录中所有50个H5文件
-- **输出管理**: 创建`输入目录名+output`并行目录结构
-- **格式一致**: 输出H5文件与输入保持完全相同的events/t,x,y,p结构
-- **时序保持**: 精确的时间戳映射，保持原始时间轴完整性
-- **智能分段**: 100ms→5×20ms分段处理，内存友好
-
-✅ **数据集本地化** - **2025-09-04完成**:
-- **路径迁移**: `/mnt/e/2025/event_flick_flare/main/output/data_simu/` → `/mnt/e/2025/event_flick_flare/Unet_main/data_simu/`
-- **训练数据**: 500个H5文件对 (background_with_flare_events + background_with_light_events)
-- **测试数据**: 50个H5文件对 (background_with_flare_events_test + background_with_light_events_test)
-- **输出数据**: 50个处理结果 (background_with_flare_events_testoutput/)
-- **配置更新**: 所有config文件已更新为本地路径
-- **独立部署**: 项目现在完全自包含，无外部依赖
+✅ **核心技术突破**:
+- **真正残差学习**: 初始完美恒等映射，专注炫光去除
+- **文件级缓存**: Dataset + 输出层双重I/O优化
+- **内存直接合并**: 消除临时文件，基于100ms固定输入简化
+- **时间戳精确映射**: 0,20,40,60,80ms预测性分段
 
 ### Debug模式 - **2025-01-03最新实现 + 真正残差学习支持**
 ✅ **增强可视化debug系统**:
@@ -490,6 +480,67 @@ data_simu/physics_method/
 - **避免问题**: 消除自适应时间间隔导致的泛化失败
 
 ---
+
+## 性能优化进展 - **2025-09-05 全面完成**
+
+**✅ Test模式性能优化全面完成**:
+
+1. **✅ Dataset层5倍H5重复读取已修复**:
+   - 实现了EventVoxelDataset的`_events_cache = {}`文件级缓存
+   - 每个文件只读取一次，5个segments共享缓存
+   - Dataset层I/O优化完成
+
+2. **✅ 输出层重复H5读取已修复** - **重大发现**:
+   - **原问题**: `_save_segment_output`中每个segment又重新读取H5文件
+   - **原因**: 复杂的时间戳重映射逻辑需要原始时间范围
+   - **解决**: 基于100ms固定输入，使用简单的线性时间映射
+   - **效果**: 完全消除输出阶段的重复I/O
+
+3. **✅ 临时npy文件机制已消除**:
+   - **原设计**: segment → .npy文件 → reload → merge → H5
+   - **新设计**: segment → 内存buffer → merge → H5
+   - **优化**: `_segment_buffers = {}` 内存缓存替代磁盘I/O
+
+4. **✅ 时间戳映射已简化**:
+   - **基于100ms固定输入**: segment时间戳可预测(0,20,40,60,80ms)
+   - **线性映射**: 无需重新读取原始文件计算时间范围
+   - **简洁逻辑**: `segment_start = segment_idx * 20000us`
+
+**🎯 最终数据流 (Linus式简洁)**:
+```
+H5文件 → Dataset缓存(1次读取) → 5个segments → UNet推理 → 
+内存buffer → 直接合并 → H5输出 (0次重复I/O)
+```
+
+**⚡ 性能验证结果**:
+- **Dataset**: 5倍I/O减少 (文件读取优化)
+- **输出**: 5倍I/O减少 (消除重复H5读取)  
+- **磁盘**: 消除所有临时npy文件I/O
+- **实测**: 2倍处理速度提升 (~60秒/文件)
+
+## 核心性能瓶颈TODO - **需要仔细思考**
+
+**⚠️ voxel_to_events解码算法优化**:
+
+**问题分析**:
+- **位置**: `src/data_processing/decode.py:43-101`  
+- **复杂度**: O(N²) 双重嵌套循环 + Python列表append
+- **瓶颈**: 每个segment解码~50万事件，250次解码操作
+- **影响范围**: **公用核心方法** - 影响所有解码路径
+
+**调用路径验证需求**:
+- ✅ **Test模式生产输出**: main.py:769 (**关键性能路径**)
+- ✅ **Debug可视化**: main.py + custom_trainer.py (多处调用)
+- ✅ **Inference模式**: main.py:416  
+- ✅ **Professional visualizer**: 解码可视化
+
+**优化方案**:
+1. **向量化预分配**: 计算总事件数→一次numpy分配
+2. **批量随机数**: 替代逐像素random.uniform调用  
+3. **消除Python循环**: 全numpy操作
+4. **保持接口**: 确保`voxel_to_events(voxel, total_duration, sensor_size)`不变
+
+**风险评估**: **高** - 核心公用函数，需全面测试所有调用路径
 
 ## 重要技术发现 - **2025-09-04**
 

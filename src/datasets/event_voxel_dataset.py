@@ -28,6 +28,7 @@ class EventVoxelDataset(Dataset):
     - Fixed temporal resolution: 20ms/8bins = 2.5ms per bin (training consistency)
     - pytorch-3dunet compatibility: (C, Z, Y, X) format
     - Paired data: noisy input events ↔ clean ground truth events
+    - File-level caching: 5x I/O optimization (each file read once for 5 segments)
     """
     
     def __init__(self, 
@@ -58,6 +59,9 @@ class EventVoxelDataset(Dataset):
         self.num_segments = num_segments
         self.transform = transform
         
+        # File-level cache for 5x I/O optimization
+        self._events_cache = {}  # file_idx -> (noisy_events, clean_events)
+        
         # Setup logging
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
@@ -73,6 +77,7 @@ class EventVoxelDataset(Dataset):
         self.logger.info(f"  - {self.total_samples} total samples ({self.num_segments} segments per file)")
         self.logger.info(f"  - Segment config: {segment_duration_us/1000}ms/{num_bins}bins = {segment_duration_us/num_bins/1000:.2f}ms per bin")
         self.logger.info(f"  - Sensor size: {sensor_size}")
+        self.logger.info(f"  - File cache enabled: 5x I/O optimization")
     
     def _scan_and_match_files(self) -> List[Tuple[str, str]]:
         """
@@ -121,7 +126,7 @@ class EventVoxelDataset(Dataset):
     
     def _extract_segment_events(self, events_np: np.ndarray, segment_idx: int) -> np.ndarray:
         """
-        Extract a specific 20ms segment from 100ms events
+        Extract a specific 20ms segment from 100ms events (optimized for uniform data)
         
         Args:
             events_np: Full event array (N, 4) [t, x, y, p]
@@ -133,14 +138,16 @@ class EventVoxelDataset(Dataset):
         if len(events_np) == 0:
             return events_np
         
-        # Calculate time boundaries for this segment
+        # Optimized for uniform 0-100ms data: use fixed 20ms segments
+        # segment_idx=0: 0-20ms, segment_idx=1: 20-40ms, etc.
         t_min = events_np[:, 0].min()
         t_max = events_np[:, 0].max()
         total_duration = t_max - t_min
         
-        # Each segment covers 1/5 of the total time range
-        segment_start = t_min + segment_idx * (total_duration / self.num_segments)
-        segment_end = t_min + (segment_idx + 1) * (total_duration / self.num_segments)
+        # Fixed segment boundaries (20ms each for 100ms total)
+        segment_duration = total_duration / self.num_segments  # Should be ~20ms for uniform data
+        segment_start = t_min + segment_idx * segment_duration
+        segment_end = segment_start + segment_duration
         
         # Extract events in this time window
         mask = (events_np[:, 0] >= segment_start) & (events_np[:, 0] < segment_end)
@@ -152,9 +159,33 @@ class EventVoxelDataset(Dataset):
         """Return total number of samples (file_pairs × segments_per_file)"""
         return self.total_samples
     
+    def _get_cached_events(self, file_idx: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Get cached events for a file pair, load if not cached (5x I/O optimization)
+        
+        Args:
+            file_idx: File index
+            
+        Returns:
+            Tuple of (noisy_events, clean_events)
+        """
+        if file_idx not in self._events_cache:
+            noisy_file_path, clean_file_path = self.file_pairs[file_idx]
+            
+            # Load H5 files once per file_idx (not per segment!)
+            noisy_events = load_h5_events(noisy_file_path)
+            clean_events = load_h5_events(clean_file_path)
+            
+            # Cache for reuse by 5 segments
+            self._events_cache[file_idx] = (noisy_events, clean_events)
+            
+            self.logger.debug(f"Cached file {file_idx}: {len(noisy_events)} noisy, {len(clean_events)} clean events")
+        
+        return self._events_cache[file_idx]
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
-        Get a training sample
+        Get a training sample with 5x I/O optimization
         
         Args:
             idx: Sample index
@@ -167,12 +198,9 @@ class EventVoxelDataset(Dataset):
         file_idx = idx // self.num_segments
         segment_idx = idx % self.num_segments
         
-        noisy_file_path, clean_file_path = self.file_pairs[file_idx]
-        
         try:
-            # Load full 100ms event data
-            noisy_events = load_h5_events(noisy_file_path)
-            clean_events = load_h5_events(clean_file_path)
+            # Get cached events (5x I/O optimization - file read once for 5 segments)
+            noisy_events, clean_events = self._get_cached_events(file_idx)
             
             # Extract the specific 20ms segment
             noisy_segment = self._extract_segment_events(noisy_events, segment_idx)

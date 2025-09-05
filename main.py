@@ -738,25 +738,29 @@ class EventVoxelPipeline:
                            output_dir: Path, file_idx: int, segment_idx: int, sensor_size: tuple,
                            segment_duration_us: int, num_bins: int, num_segments: int, processed_files: set):
         """
-        Save model output for a single segment, merge all segments when file is complete
+        Save model output for a single segment - optimized for 100ms fixed input
+        Uses in-memory buffering to eliminate disk I/O waste
         
         Args:
             outputs: Model output tensor (1, 1, 8, H, W)
-            input_file_path: Original input file path
+            input_file_path: Original input file path (for reference only)
             output_file_name: Output file name
             output_dir: Output directory
             file_idx: File index
-            segment_idx: Segment index within file
+            segment_idx: Segment index within file (0-4)
             sensor_size: Sensor size (H, W)  
-            segment_duration_us: Duration of each segment in microseconds
-            num_bins: Number of temporal bins
-            num_segments: Total segments per file
+            segment_duration_us: Duration per segment (20ms)
+            num_bins: Number of temporal bins (8)
+            num_segments: Total segments per file (5)
             processed_files: Set to track processed files
         """
         try:
-            # Create temporary directory for segments
-            temp_dir = output_dir / 'temp_segments'
-            temp_dir.mkdir(exist_ok=True)
+            # Initialize file buffer if not exists
+            if not hasattr(self, '_segment_buffers'):
+                self._segment_buffers = {}  # file_idx -> [seg0_events, seg1_events, ...]
+            
+            if file_idx not in self._segment_buffers:
+                self._segment_buffers[file_idx] = [None] * num_segments
             
             # Remove batch and channel dimensions: (1, 1, 8, H, W) -> (8, H, W)
             output_voxel = outputs[0, 0].cpu()
@@ -764,96 +768,76 @@ class EventVoxelPipeline:
             # Convert voxel back to events
             output_events = voxel_to_events(
                 output_voxel, 
-                total_duration=segment_duration_us,
+                total_duration=segment_duration_us,  # 20ms per segment
                 sensor_size=sensor_size
             )
             
-            # Save segment temporarily
-            segment_file = temp_dir / f"{output_file_name}_seg_{segment_idx}.npy"
-            
+            # Fixed 100ms input: simple timestamp mapping without H5 re-reading
             if len(output_events) > 0:
-                # Load original file to get correct timestamp range
-                original_events = load_h5_events(str(input_file_path))
+                # For 100ms fixed input: segment timestamps are predictable
+                # segment_idx=0: 0-20ms, segment_idx=1: 20-40ms, etc.
+                segment_start_us = segment_idx * segment_duration_us  # 0, 20000, 40000, 60000, 80000
+                segment_end_us = (segment_idx + 1) * segment_duration_us
                 
-                if len(original_events) > 0:
-                    # Adjust timestamps to match original file's segment time range
-                    t_min_original = original_events[:, 0].min()
-                    t_max_original = original_events[:, 0].max()
-                    total_duration_original = t_max_original - t_min_original
+                # Simple linear remapping to correct time range
+                if len(output_events) > 0:
+                    t_decoded_min = output_events[:, 0].min()
+                    t_decoded_max = output_events[:, 0].max()
+                    t_decoded_range = t_decoded_max - t_decoded_min
                     
-                    # Calculate this segment's time range in original timeline
-                    segment_start_global = t_min_original + segment_idx * (total_duration_original / num_segments)
-                    segment_end_global = t_min_original + (segment_idx + 1) * (total_duration_original / num_segments)
-                    
-                    # Rescale segment events to match original time range
-                    if len(output_events) > 0:
-                        t_segment_min = output_events[:, 0].min()
-                        t_segment_max = output_events[:, 0].max()
-                        t_segment_range = t_segment_max - t_segment_min
-                        
-                        if t_segment_range > 0:
-                            # Rescale to global timeline
-                            t_scale = (segment_end_global - segment_start_global) / t_segment_range
-                            output_events[:, 0] = segment_start_global + (output_events[:, 0] - t_segment_min) * t_scale
-                        else:
-                            # If all events have same timestamp, place in middle of segment
-                            output_events[:, 0] = (segment_start_global + segment_end_global) / 2
-                
-                np.save(segment_file, output_events)
-            else:
-                # Save empty array
-                np.save(segment_file, np.empty((0, 4)))
+                    if t_decoded_range > 0:
+                        # Linear rescale to 20ms segment
+                        scale = segment_duration_us / t_decoded_range
+                        output_events[:, 0] = segment_start_us + (output_events[:, 0] - t_decoded_min) * scale
+                    else:
+                        # All events at same time - place in middle of segment
+                        output_events[:, 0] = (segment_start_us + segment_end_us) / 2
+            
+            # Store in memory buffer (no disk I/O)
+            self._segment_buffers[file_idx][segment_idx] = output_events
             
             # Check if this is the last segment of the file
             if segment_idx == num_segments - 1:
-                # Merge all segments for this file
-                self._merge_and_save_file_segments(
-                    output_file_name, output_dir, temp_dir, num_segments
+                # Merge all segments in memory and save H5 directly
+                self._merge_and_save_file_segments_optimized(
+                    file_idx, output_file_name, output_dir
                 )
                 processed_files.add(file_idx)
                 
-                # Clean up temporary segments for this file
-                for seg_idx in range(num_segments):
-                    seg_file = temp_dir / f"{output_file_name}_seg_{seg_idx}.npy"
-                    if seg_file.exists():
-                        seg_file.unlink()
+                # Clean up memory buffer for this file
+                del self._segment_buffers[file_idx]
                 
                 self.logger.info(f"✅ Saved complete file: {output_file_name}")
                 
         except Exception as e:
             self.logger.error(f"Failed to save segment output for {output_file_name}: {e}")
     
-    def _merge_and_save_file_segments(self, output_file_name: str, output_dir: Path, 
-                                    temp_dir: Path, num_segments: int):
+    def _merge_and_save_file_segments_optimized(self, file_idx: int, output_file_name: str, output_dir: Path):
         """
-        Merge all segments of a file and save as H5
+        Merge all segments of a file in memory and save as H5 (no temporary files)
         
         Args:
+            file_idx: File index
             output_file_name: Output file name
             output_dir: Output directory
-            temp_dir: Temporary directory containing segments
-            num_segments: Number of segments to merge
         """
         try:
             all_segments = []
             
-            # Load all segments
-            for seg_idx in range(num_segments):
-                segment_file = temp_dir / f"{output_file_name}_seg_{seg_idx}.npy"
-                if segment_file.exists():
-                    segment_events = np.load(segment_file)
-                    if len(segment_events) > 0:
-                        all_segments.append(segment_events)
+            # Merge segments from memory buffer (no disk I/O)
+            for segment_events in self._segment_buffers[file_idx]:
+                if segment_events is not None and len(segment_events) > 0:
+                    all_segments.append(segment_events)
             
             # Merge segments
             if all_segments:
                 final_events = np.vstack(all_segments)
-                # Sort by timestamp
+                # Sort by timestamp (important for correct temporal order)
                 final_events = final_events[np.argsort(final_events[:, 0])]
             else:
                 final_events = np.empty((0, 4))
             
-            # Save as H5 file with same format as input
+            # Save as H5 file directly (no temporary files)
             output_file_path = output_dir / output_file_name
             self._save_events_to_h5(final_events, str(output_file_path))
             
