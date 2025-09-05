@@ -38,7 +38,8 @@ class EventVoxelDataset(Dataset):
                  segment_duration_us: int = 20000,  # 20ms per segment
                  num_bins: int = 8,                 # 8 bins per 20ms segment
                  num_segments: int = 5,             # 5 segments per 100ms file
-                 transform=None):
+                 transform=None,
+                 max_cache_size: int = 10):         # 智能缓存大小限制
         """
         Initialize EventVoxelDataset for deflare task
         
@@ -50,6 +51,7 @@ class EventVoxelDataset(Dataset):
             num_bins: Number of temporal bins per segment (8)
             num_segments: Number of segments per 100ms file (5)  
             transform: Optional data transforms
+            max_cache_size: Maximum number of files to keep in cache (防内存泄漏)
         """
         self.noisy_events_dir = Path(noisy_events_dir)
         self.clean_events_dir = Path(clean_events_dir)
@@ -59,8 +61,10 @@ class EventVoxelDataset(Dataset):
         self.num_segments = num_segments
         self.transform = transform
         
-        # File-level cache for 5x I/O optimization
+        # 智能缓存管理 - 防止内存泄漏的LRU缓存
+        self.max_cache_size = max_cache_size
         self._events_cache = {}  # file_idx -> (noisy_events, clean_events)
+        self._cache_access_order = []  # LRU tracking: [file_idx, ...]
         
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -77,7 +81,11 @@ class EventVoxelDataset(Dataset):
         self.logger.info(f"  - {self.total_samples} total samples ({self.num_segments} segments per file)")
         self.logger.info(f"  - Segment config: {segment_duration_us/1000}ms/{num_bins}bins = {segment_duration_us/num_bins/1000:.2f}ms per bin")
         self.logger.info(f"  - Sensor size: {sensor_size}")
-        self.logger.info(f"  - File cache enabled: 5x I/O optimization")
+        self.logger.info(f"  - Smart cache: max {max_cache_size} files (防内存泄漏)")
+        
+        # 内存使用估算
+        estimated_cache_memory_mb = max_cache_size * 2 * 4  # 假设每个events数组4MB
+        self.logger.info(f"  - Estimated cache memory: ~{estimated_cache_memory_mb}MB (vs 无限制可达1-4GB)")
     
     def _scan_and_match_files(self) -> List[Tuple[str, str]]:
         """

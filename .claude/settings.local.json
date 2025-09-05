@@ -22,7 +22,9 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:infohub.delltechnologies.com)",
       "WebFetch(domain:gitee.com)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(nvidia-smi:*)",
+      "Bash(cat:*)"
     ],
     "deny": []
   }
