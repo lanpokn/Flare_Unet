@@ -557,8 +557,8 @@ class EventVoxelPipeline:
         try:
             from pathlib import Path
             
-            # 创建debug输出结构
-            iteration_dir = Path(debug_dir) / f"test_iter_{iteration:03d}"
+            # 创建debug输出结构 - 优化版本标识
+            iteration_dir = Path(debug_dir) / f"test_optimized_iter_{iteration:03d}"
             iteration_dir.mkdir(parents=True, exist_ok=True)
             
             self.logger.info(f"🐛 TEST MODE: Generating debug visualizations for Batch {batch_idx}")
@@ -620,7 +620,7 @@ class EventVoxelPipeline:
         try:
             from pathlib import Path
             
-            iteration_dir = Path(debug_dir) / f"test_iter_{iteration:03d}"
+            iteration_dir = Path(debug_dir) / f"test_optimized_iter_{iteration:03d}"
             
             # 获取第一个样本的数据
             input_voxel = inputs[0, 0].cpu()   # (8, H, W)

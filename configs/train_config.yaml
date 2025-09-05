@@ -78,15 +78,15 @@ lr_scheduler:
 trainer:
   # Checkpointing
   checkpoint_dir: checkpoints/event_voxel_deflare
-  resume: null              # Path to resume from checkpoint (null = start from scratch)
-  
+  # resume: null              # Path to resume from checkpoint (null = start from scratch)
+  resume: checkpoints/event_voxel_deflare/checkpoint_epoch_0000_iter_002250.pth
   # Training duration
   max_num_epochs: 50        # 正常训练50个epochs
   max_num_iterations: null  # 无iteration限制，按epoch训练
   
   # Validation and logging
-  validate_after_iters: 250  # 每1250个iteration验证一次 (快速反馈)
-  log_after_iters: 100       # 每1个iteration记录日志到tensorboard
+  validate_after_iters: 1250  # 每1250个iteration验证一次 (快速反馈)
+  log_after_iters: 250       # 每1个iteration记录日志到tensorboard
   max_num_workers: 0         # 单线程避免并发问题
   
   # Early stopping (optional)

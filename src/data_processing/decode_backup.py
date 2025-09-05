@@ -58,60 +58,43 @@ def voxel_to_events(voxel, total_duration=100000, sensor_size=(480, 640), random
     B, H, W = voxel.shape
     bin_duration = total_duration / B  # Duration of each temporal bin
     
-    # Vectorized decode - much faster than nested Python loops
+    events_list = []
     
-    # Round to integers to get event counts for all bins at once
-    event_counts = torch.round(voxel).int()
-    
-    # Find all non-zero pixels across all bins
-    nonzero_indices = torch.nonzero(event_counts, as_tuple=False)  # (N_pixels, 3) -> [bin, y, x]
-    
-    if len(nonzero_indices) == 0:
-        return np.empty((0, 4))
-    
-    # Extract coordinates and counts
-    bins = nonzero_indices[:, 0].numpy()
-    ys = nonzero_indices[:, 1].numpy()  
-    xs = nonzero_indices[:, 2].numpy()
-    counts = event_counts[nonzero_indices[:, 0], nonzero_indices[:, 1], nonzero_indices[:, 2]].numpy()
-    
-    # Calculate total number of events to pre-allocate array
-    abs_counts = np.abs(counts)
-    total_events = np.sum(abs_counts)
-    
-    if total_events == 0:
-        return np.empty((0, 4))
-    
-    # Pre-allocate output array
-    events_np = np.empty((total_events, 4))
-    
-    # Vectorized generation of events
-    event_idx = 0
-    for i in range(len(nonzero_indices)):
-        bin_idx = bins[i]
-        y, x = ys[i], xs[i]
-        n = counts[i]
+    for bin_idx in range(B):
+        bin_voxel = voxel[bin_idx]  # (H, W)
         
-        if n == 0:
-            continue
+        # Round to integers to get event counts
+        event_counts = torch.round(bin_voxel).int()
+        
+        # Find all non-zero pixels
+        nonzero_indices = torch.nonzero(event_counts, as_tuple=False)  # (N_pixels, 2)
+        
+        for pixel_idx in range(len(nonzero_indices)):
+            y, x = nonzero_indices[pixel_idx].tolist()
+            n = event_counts[y, x].item()
             
-        num_events = abs_counts[i]
-        polarity = 1 if n > 0 else -1
-        
-        # Generate random timestamps within this bin
-        bin_start = bin_idx * bin_duration
-        bin_end = (bin_idx + 1) * bin_duration
-        timestamps = np.random.uniform(bin_start, bin_end, num_events)
-        
-        # Batch assign events for this pixel
-        end_idx = event_idx + num_events
-        events_np[event_idx:end_idx, 0] = timestamps
-        events_np[event_idx:end_idx, 1] = x
-        events_np[event_idx:end_idx, 2] = y  
-        events_np[event_idx:end_idx, 3] = polarity
-        event_idx = end_idx
+            if n == 0:
+                continue
+                
+            # Generate abs(n) events
+            num_events = abs(n)
+            polarity = 1 if n > 0 else -1
+            
+            # Generate random timestamps within this bin
+            bin_start = bin_idx * bin_duration
+            bin_end = (bin_idx + 1) * bin_duration
+            timestamps = np.random.uniform(bin_start, bin_end, num_events)
+            
+            # Create events for this pixel
+            for i in range(num_events):
+                event = [timestamps[i], x, y, polarity]
+                events_list.append(event)
     
-    # Sort by timestamp
+    if len(events_list) == 0:
+        return np.empty((0, 4))
+    
+    # Convert to numpy array and sort by timestamp
+    events_np = np.array(events_list)
     sort_indices = np.argsort(events_np[:, 0])
     events_np = events_np[sort_indices]
     

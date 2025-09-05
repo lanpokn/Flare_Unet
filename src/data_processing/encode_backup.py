@@ -96,19 +96,14 @@ def events_to_voxel(events_np, num_bins=32, sensor_size=(480, 640), fixed_durati
     # Assign events to temporal bins using fixed intervals
     bin_indices = np.clip(((ts - t_min) / dt).astype(int), 0, num_bins - 1)
     
-    # Vectorized accumulation - much faster than Python loop
-    # Filter events within sensor bounds
-    valid_mask = (xs >= 0) & (xs < sensor_size[1]) & (ys >= 0) & (ys < sensor_size[0])
-    
-    if valid_mask.any():
-        valid_bins = bin_indices[valid_mask]
-        valid_xs = xs[valid_mask]
-        valid_ys = ys[valid_mask] 
-        valid_ps = ps[valid_mask]
+    # Accumulate events in each bin
+    for i in range(len(events_np)):
+        bin_idx = bin_indices[i]
+        x, y, p = xs[i], ys[i], ps[i]
         
-        # Vectorized accumulation using numpy advanced indexing
-        # This is equivalent to the Python loop but much faster
-        np.add.at(voxel.numpy(), (valid_bins, valid_ys, valid_xs), valid_ps)
+        # Check bounds
+        if 0 <= x < sensor_size[1] and 0 <= y < sensor_size[0]:
+            voxel[bin_idx, y, x] += p
     
     return voxel
 
