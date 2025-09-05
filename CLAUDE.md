@@ -121,7 +121,7 @@ model.final_activation = nn.Identity()  # 强制替换为恒等映射
 ### 核心差异: 自动扩展 vs 精确控制
 
 **官方写法**: `f_maps: 64, num_levels: 5` → 自动扩展为 `[64,128,256,512,1024]` (113M参数)
-**我们写法**: `f_maps: [32,64,128,256], num_levels: 4` → 精确控制 (250万参数)
+**我们写法**: `f_maps: [32,64,128,256], num_levels: 4` → 精确控制 (707万参数)
 
 ### 关键参数作用
 
@@ -149,42 +149,43 @@ model.final_activation = nn.Identity()  # 强制替换为恒等映射
 ```yaml
 # 固定深度4层，整体翻倍f_maps来扩大模型
 num_levels: 4              # 固定4层深度(5层有bug)
-f_maps: [64, 128, 256, 512]  # 整体翻倍扩容(当前×8倍)
+f_maps: [64, 128, 256, 512]  # 整体翻倍扩容(707万→2827万参数)
 ```
 
 ### 参数量对比
 ```
-当前: [32,64,128,256] × 4层 = 250万参数
-翻倍: [64,128,256,512] × 4层 = 2800万参数  
+轻量: [32,64,128] × 3层 = 173万参数
+当前: [32,64,128,256] × 4层 = 707万参数 ✅
+翻倍: [64,128,256,512] × 4层 = 2827万参数  
 官方: [64,128,256,512,1024] × 5层 = 1.13亿参数
-医学标准: 5-50M参数
+医学标准: 5-50M参数 (当前已达标)
 限制: 最大4层深度(5层有尺寸bug)
 ```
 
-**结论**: 我们的"额外参数"都有实际作用，不是冗余而是精确控制。核心问题是模型容量不足，解决方案是固定深度整体翻倍f_maps。
+**结论**: 我们的"额外参数"都有实际作用，不是冗余而是精确控制。707万参数已达到医学分割标准，模型容量合理。
 
 ## 推荐训练配置 - **2025-01-03更新**
 
 ### 模型选择与参数量分析
 **推荐**: `TrueResidualUNet3D` (真正残差学习)
 
-**当前配置 vs 官方默认对比** - **已升级到中等规模**:
-| 参数 | 官方默认 | 之前轻量配置 | **当前中等配置** | 原因 |
+**当前配置 vs 官方默认对比** - **已升级到医学标准**:
+| 参数 | 官方默认 | 之前轻量配置 | **当前标准配置** | 原因 |
 |-----|---------|------------|---------------|------|
-| `f_maps` | 64 | [16, 32, 64] | **[32, 64, 128]** ✅ | **4倍特征图容量，更强学习能力** |
-| `num_levels` | 5 | 3 | **3** | 平衡深度与效率 |
+| `f_maps` | [64,128,256,512,1024] | [32, 64, 128] | **[32, 64, 128, 256]** ✅ | **4层深度，707万参数** |
+| `num_levels` | 5 | 3 | **4** | 最大可用深度(5层有bug) |
 | `num_groups` | 8 | 8 ✅ | **8** ✅ | GroupNorm标准设置 |
 | `layer_order` | 'gcr' | 'gcr' ✅ | **'gcr'** ✅ | GroupNorm+Conv+ReLU |
 | `dropout_prob` | 0.1 | 0.1 ✅ | **0.1** ✅ | 标准正则化 |
-| **总参数量** | **1.13亿** | 43万 | **~173万** | **4倍学习能力提升** |
+| **总参数量** | **1.13亿** | 173万 | **707万** ✅ | **达到医学分割标准** |
 
 ```yaml
-# 当前中等规模配置 (~173万参数) - 2025-01-03已部署
+# 当前医学标准配置 (707万参数) - 2025-09-04已部署
 model:
   name: 'TrueResidualUNet3D'
   backbone: 'ResidualUNet3D'
-  f_maps: [32, 64, 128]      # 4倍特征图容量，更强学习能力
-  num_levels: 3              # 保持3层深度，平衡效率
+  f_maps: [32, 64, 128, 256] # 4层深度，707万参数
+  num_levels: 4              # 最大可用深度，平衡性能
   layer_order: 'gcr'         # GroupNorm + Conv + ReLU
   num_groups: 8              # GroupNorm分组
   conv_padding: 1            # 卷积padding
@@ -230,9 +231,11 @@ python main.py test --config configs/test_config.yaml --debug  # 评估checkpoin
 python main.py train --config configs/train_config.yaml --debug  # 调试训练
 ```
 
-## 使用指南 - **2025-09-04 本地化完成**
+## 使用指南 - **2025-09-05 批量推理更新**
 
 **重要**: 所有数据已本地化至 `data_simu/physics_method/`，无需外部依赖
+
+**批量推理输出**: test模式会创建`输入目录名+output`并行目录，输出去炫光处理后的H5文件
 
 ### 训练 - **使用本地数据**
 ```bash
@@ -243,14 +246,21 @@ python main.py train --config configs/train_config.yaml
 python main.py train --config configs/train_config.yaml --debug
 ```
 
-### 测试 - **完全重构，支持checkpoint评估**
+### 测试 - **批量推理模式**
 ```bash
-# 评估2500 checkpoint (50个本地测试文件)
+# 批量推理 (处理所有测试文件，保存去炫光结果)
 python main.py test --config configs/test_config.yaml
 
-# Debug测试模式 (智能采样：每5个batch可视化1个)
+# 批量推理 + 可视化debug模式 (可选)
 python main.py test --config configs/test_config.yaml --debug
 ```
+
+**核心功能** - **2025-09-05更新**:
+- ✅ **批量文件处理**: 自动处理test目录中所有H5文件
+- ✅ **输出目录管理**: 创建`输入目录名+output`并行目录结构
+- ✅ **文件名保持**: 输出文件名与输入文件名完全一致
+- ✅ **H5格式一致**: 输出H5文件保持与输入相同的events/t,x,y,p结构
+- ✅ **时间戳保持**: 保持原始时间范围，确保时序正确性
 
 ### 推理 - **待更新到本地路径**
 ```bash
@@ -281,26 +291,28 @@ python visualize_training_logs.py --detailed
 - ✅ **英文界面**: 避免字体乱码问题，专业展示
 - ✅ **无弹窗模式**: 直接保存，不弹出显示窗口
 
-## 最新状态 - **2025-09-04更新**
+## 最新状态 - **2025-09-05更新**
 
 ✅ **生产就绪系统**:
-- TrueResidualUNet3D + 真正残差学习 (173万参数)
-- 完整MLOps pipeline (训练→验证→checkpoint→**测试**)
-- **完善的测试模式**: 支持checkpoint评估 + 智能可视化
+- TrueResidualUNet3D + 真正残差学习 (707万参数)
+- 完整MLOps pipeline (训练→验证→**批量推理**)
+- **批量推理模式**: test模式现支持处理所有测试文件并保存去炫光结果
 - **本地化数据管理**: data_simu已完全迁移至本地项目目录
 - 现代化tqdm进度条 + emoji输出
 - 分段内存优化 + 固定时间分辨率
 
-✅ **测试模式完善** - **2025-09-04新增**:
-- **配置统一**: test_config.yaml与train_config.yaml完全匹配
-- **数据一致**: 使用与训练validation相同的数据路径
-- **checkpoint兼容**: 支持加载任意iteration的checkpoint
-- **智能可视化**: 每5个batch采样1个，覆盖所有文件
+✅ **批量推理系统** - **2025-09-05新增**:
+- **文件处理**: 自动处理test目录中所有50个H5文件
+- **输出管理**: 创建`输入目录名+output`并行目录结构
+- **格式一致**: 输出H5文件与输入保持完全相同的events/t,x,y,p结构
+- **时序保持**: 精确的时间戳映射，保持原始时间轴完整性
+- **智能分段**: 100ms→5×20ms分段处理，内存友好
 
 ✅ **数据集本地化** - **2025-09-04完成**:
 - **路径迁移**: `/mnt/e/2025/event_flick_flare/main/output/data_simu/` → `/mnt/e/2025/event_flick_flare/Unet_main/data_simu/`
 - **训练数据**: 500个H5文件对 (background_with_flare_events + background_with_light_events)
 - **测试数据**: 50个H5文件对 (background_with_flare_events_test + background_with_light_events_test)
+- **输出数据**: 50个处理结果 (background_with_flare_events_testoutput/)
 - **配置更新**: 所有config文件已更新为本地路径
 - **独立部署**: 项目现在完全自包含，无外部依赖
 
@@ -393,32 +405,34 @@ model:
 - `visualize_training_logs.py`: **训练loss可视化工具** - **2025-01-03新增**
 - **configs/***: **所有配置已本地化** - **2025-09-04更新**
 
-### 测试模式详解 - **2025-09-04新增**
+### 测试模式详解 - **2025-09-05批量推理更新**
 
-✅ **核心功能**:
-- **Checkpoint评估**: 加载任意iteration的checkpoint进行性能评估
-- **数据完整性**: 与train validation使用相同数据路径，确保一致性
-- **智能可视化**: debug模式采用5:1采样策略，每个文件可视化1个代表性segment
+✅ **批量推理工作流程**:
+- **输入目录**: `background_with_flare_events_test/` (50个含炫光的H5文件)
+- **输出目录**: `background_with_flare_events_testoutput/` (自动创建)
+- **处理流程**: 每个H5文件 → 5个20ms segments → 3D UNet推理 → 合并输出 → 保存H5
+- **文件对应**: 输入输出文件名完全一致，便于后续分析对比
 
-✅ **使用场景**:
-```bash
-# 评估2500 iteration checkpoint性能
-python main.py test --config configs/test_config.yaml
-
-# 评估 + 智能可视化 (52个文件 × 1个可视化 = 52个文件夹)
-python main.py test --config configs/test_config.yaml --debug
+✅ **目录结构**:
+```
+data_simu/physics_method/
+├── background_with_flare_events_test/     # 输入: 50个测试文件
+└── background_with_flare_events_testoutput/ # 输出: 50个处理结果
+    ├── composed_00504_bg_flare.h5           # 与输入同名
+    ├── composed_00505_bg_flare.h5           # 去炫光处理后
+    └── ...                                  # 保持H5格式一致
 ```
 
-✅ **数据处理流程**:
-- **输入**: 52个test文件 → 260个samples (52×5 segments)
-- **评估**: 全部260个samples计算loss
-- **可视化**: batch 0,5,10,15... (每个文件的第1个segment)
-- **输出**: 平均test loss + 可选的52个可视化文件夹
+✅ **技术实现**:
+- **分段处理**: 100ms文件分为5×20ms segments，逐段通过UNet处理
+- **时间同步**: 输出事件时间戳精确映射回原始时间轴
+- **格式保持**: events/t,x,y,p数据结构与输入完全一致
+- **内存优化**: 临时segments存储，处理完成后自动清理
 
 ✅ **配置要求**:
 - `model`: 必须与训练配置完全匹配（TrueResidualUNet3D, f_maps, num_levels等）
 - `path`: checkpoint文件路径（如`checkpoint_epoch_0000_iter_002500.pth`）
-- `val_noisy_dir`/`val_clean_dir`: 与train_config中validation路径一致
+- `val_noisy_dir`: 测试输入目录路径
 - **本地数据路径**: 所有路径已更新为本地`data_simu/physics_method/`结构
 
 ### 项目完整性验证 - **2025-09-04新增**
@@ -440,15 +454,15 @@ data_simu/physics_method/
 
 ✅ **Checkpoint可用性**:
 - `checkpoint_epoch_0000_iter_002500.pth` ✅ 需要重新训练 (配置已升级)
-- 当前配置: TrueResidualUNet3D, [32,64,128,256], 250万参数
-- 服务器配置: [64,128,256,512], 2800万参数
+- 当前配置: TrueResidualUNet3D, [32,64,128,256], 707万参数 ✅
+- 服务器配置: [64,128,256,512], 2827万参数
 
 ✅ **参数理解完整性** - **2025-09-04关键更新**:
 - **pytorch-3dunet默认行为**: 自动扩展f_maps (官方64→[64,128,256,512,1024])
 - **我们的精确控制**: 明确指定f_maps=[32,64,128,256]，禁用自动扩展
 - **深度限制发现**: 最大4层，5层会导致尺寸过小bug (256x0x30x40)
 - **显存vs深度**: 深度几乎不占显存，扩展模型应该整体翻倍f_maps
-- **核心问题识别**: 250万参数仍 < 医学标准5-50M，需要服务器配置
+- **容量达标**: 707万参数已达到医学标准5-50M范围，模型容量合理
 
 ## 验证结果与技术突破
 

@@ -15,7 +15,14 @@
 
 ```bash
 # 创建名为Umain的虚拟环境 (Python 3.8)
-conda create -n Umain python=3.8 -y
+conda create -n Umain python=3.9 -y
+
+# conda activate Umain
+
+# conda install -c pytorch -c nvidia -c conda-forge pytorch pytorch-cuda=12.1 pytorch-3dunet
+
+# pip install numpy h5py matplotlib opencv-python scipy pandas pyyaml scikit-image tqdm
+
 
 # 激活虚拟环境
 conda activate Umain

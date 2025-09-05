@@ -20,7 +20,8 @@
       "Bash(grep:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:infohub.delltechnologies.com)"
+      "WebFetch(domain:infohub.delltechnologies.com)",
+      "WebFetch(domain:gitee.com)"
     ],
     "deny": []
   }

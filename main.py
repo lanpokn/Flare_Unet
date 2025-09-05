@@ -116,12 +116,15 @@ class EventVoxelPipeline:
     
     def test_mode(self, config_path: str, debug: bool = False, debug_dir: str = 'debug_output') -> int:
         """
-        Testing mode - evaluates trained model on test dataset with optional debug visualization
+        Testing mode - batch inference on test dataset, saving processed H5 files
+        
+        Process each input H5 file through the trained model and save the denoised output
+        with the same filename to a parallel output directory (input_dir + 'output').
         
         Args:
             config_path: Path to test configuration YAML
-            debug: Enable debug mode with detailed visualization
-            debug_dir: Directory for debug visualizations
+            debug: Enable debug mode with detailed visualization (optional)
+            debug_dir: Directory for debug visualizations (optional)
             
         Returns:
             Exit code (0 = success, non-zero = error)
@@ -209,10 +212,27 @@ class EventVoxelPipeline:
             num_batches = 0
             criterion = torch.nn.MSELoss()
             
-            # Test模式：处理所有数据，debug模式只影响可视化
-            debug_config = config.get('debug', {})
+            # Get output directory configuration
+            loader_config = config.get('loaders', {})
+            input_dir = Path(loader_config.get('val_noisy_dir'))
+            output_dir = input_dir.parent / f"{input_dir.name}output"
+            output_dir.mkdir(parents=True, exist_ok=True)
             
-            self.logger.info(f"Evaluating on {len(test_dataset)} samples...")
+            # Get inference parameters
+            sensor_size = tuple(loader_config.get('sensor_size', [480, 640]))
+            segment_duration_us = loader_config.get('segment_duration_us', 20000)
+            num_bins = loader_config.get('num_bins', 8)
+            num_segments = loader_config.get('num_segments', 5)
+            
+            self.logger.info(f"Input directory: {input_dir}")
+            self.logger.info(f"Output directory: {output_dir}")
+            self.logger.info(f"Processing {len(test_dataset)} samples...")
+            
+            # Track processed files to avoid duplicates (each file has 5 segments)
+            processed_files = set()
+            
+            # Test模式：处理所有数据，保存输出，debug模式只影响可视化
+            debug_config = config.get('debug', {})
             
             with torch.no_grad():
                 for batch_idx, batch in enumerate(test_loader):
@@ -238,34 +258,62 @@ class EventVoxelPipeline:
                             batch_idx, inputs, outputs, debug_config['debug_dir'], batch_idx, model
                         )
                     
+                    # Save model output for each segment
+                    file_idx = batch_idx // num_segments  # File index
+                    segment_idx = batch_idx % num_segments  # Segment index within file
+                    
+                    # Get original file information from dataset
+                    if hasattr(test_dataset, 'file_pairs') and file_idx < len(test_dataset.file_pairs):
+                        file_pair = test_dataset.file_pairs[file_idx]
+                        input_file_path = Path(file_pair[0])  # noisy file path
+                        output_file_name = input_file_path.name
+                        
+                        # Process and save output for this segment
+                        self._save_segment_output(
+                            outputs, input_file_path, output_file_name, output_dir,
+                            file_idx, segment_idx, sensor_size, segment_duration_us,
+                            num_bins, num_segments, processed_files
+                        )
+                    
                     loss = criterion(outputs, targets)
                     
                     total_loss += loss.item()
                     num_batches += 1
                     
-                    if batch_idx % 10 == 0 or (debug_config.get('enabled', False) and batch_idx < 5):
+                    if batch_idx % 10 == 0:
                         self.logger.info(f"Batch {batch_idx}/{len(test_loader)}, Loss: {loss.item():.6f}")
             
             avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
             
-            self.logger.info("Testing completed successfully!")
+            # Clean up temporary directory
+            temp_dir = output_dir / 'temp_segments'
+            if temp_dir.exists():
+                import shutil
+                shutil.rmtree(temp_dir)
+            
+            self.logger.info("Batch inference completed successfully!")
             self.logger.info(f"Average test loss: {avg_loss:.6f}")
+            self.logger.info(f"Processed {len(processed_files)} files")
+            self.logger.info(f"Output directory: {output_dir}")
             
             # 保存结果
             results = {
                 'test_loss': avg_loss,
                 'num_samples': len(test_dataset),
-                'model_path': model_path
+                'num_files_processed': len(processed_files),
+                'model_path': model_path,
+                'input_dir': str(input_dir),
+                'output_dir': str(output_dir)
             }
             
-            output_dir = Path(config.get('predictor', {}).get('output_dir', 'test_results'))
-            output_dir.mkdir(parents=True, exist_ok=True)
+            results_dir = Path(config.get('predictor', {}).get('output_dir', 'test_results'))
+            results_dir.mkdir(parents=True, exist_ok=True)
             
             import json
-            with open(output_dir / 'test_results.json', 'w') as f:
+            with open(results_dir / 'test_results.json', 'w') as f:
                 json.dump(results, f, indent=2)
             
-            self.logger.info(f"Results saved to: {output_dir}")
+            self.logger.info(f"Test results saved to: {results_dir}")
             
             return 0
             
@@ -685,6 +733,132 @@ class EventVoxelPipeline:
             
         except Exception as e:
             self.logger.warning(f"🐛 TEST: Failed to generate debug summary: {e}")
+    
+    def _save_segment_output(self, outputs: torch.Tensor, input_file_path: Path, output_file_name: str,
+                           output_dir: Path, file_idx: int, segment_idx: int, sensor_size: tuple,
+                           segment_duration_us: int, num_bins: int, num_segments: int, processed_files: set):
+        """
+        Save model output for a single segment, merge all segments when file is complete
+        
+        Args:
+            outputs: Model output tensor (1, 1, 8, H, W)
+            input_file_path: Original input file path
+            output_file_name: Output file name
+            output_dir: Output directory
+            file_idx: File index
+            segment_idx: Segment index within file
+            sensor_size: Sensor size (H, W)  
+            segment_duration_us: Duration of each segment in microseconds
+            num_bins: Number of temporal bins
+            num_segments: Total segments per file
+            processed_files: Set to track processed files
+        """
+        try:
+            # Create temporary directory for segments
+            temp_dir = output_dir / 'temp_segments'
+            temp_dir.mkdir(exist_ok=True)
+            
+            # Remove batch and channel dimensions: (1, 1, 8, H, W) -> (8, H, W)
+            output_voxel = outputs[0, 0].cpu()
+            
+            # Convert voxel back to events
+            output_events = voxel_to_events(
+                output_voxel, 
+                total_duration=segment_duration_us,
+                sensor_size=sensor_size
+            )
+            
+            # Save segment temporarily
+            segment_file = temp_dir / f"{output_file_name}_seg_{segment_idx}.npy"
+            
+            if len(output_events) > 0:
+                # Load original file to get correct timestamp range
+                original_events = load_h5_events(str(input_file_path))
+                
+                if len(original_events) > 0:
+                    # Adjust timestamps to match original file's segment time range
+                    t_min_original = original_events[:, 0].min()
+                    t_max_original = original_events[:, 0].max()
+                    total_duration_original = t_max_original - t_min_original
+                    
+                    # Calculate this segment's time range in original timeline
+                    segment_start_global = t_min_original + segment_idx * (total_duration_original / num_segments)
+                    segment_end_global = t_min_original + (segment_idx + 1) * (total_duration_original / num_segments)
+                    
+                    # Rescale segment events to match original time range
+                    if len(output_events) > 0:
+                        t_segment_min = output_events[:, 0].min()
+                        t_segment_max = output_events[:, 0].max()
+                        t_segment_range = t_segment_max - t_segment_min
+                        
+                        if t_segment_range > 0:
+                            # Rescale to global timeline
+                            t_scale = (segment_end_global - segment_start_global) / t_segment_range
+                            output_events[:, 0] = segment_start_global + (output_events[:, 0] - t_segment_min) * t_scale
+                        else:
+                            # If all events have same timestamp, place in middle of segment
+                            output_events[:, 0] = (segment_start_global + segment_end_global) / 2
+                
+                np.save(segment_file, output_events)
+            else:
+                # Save empty array
+                np.save(segment_file, np.empty((0, 4)))
+            
+            # Check if this is the last segment of the file
+            if segment_idx == num_segments - 1:
+                # Merge all segments for this file
+                self._merge_and_save_file_segments(
+                    output_file_name, output_dir, temp_dir, num_segments
+                )
+                processed_files.add(file_idx)
+                
+                # Clean up temporary segments for this file
+                for seg_idx in range(num_segments):
+                    seg_file = temp_dir / f"{output_file_name}_seg_{seg_idx}.npy"
+                    if seg_file.exists():
+                        seg_file.unlink()
+                
+                self.logger.info(f"✅ Saved complete file: {output_file_name}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to save segment output for {output_file_name}: {e}")
+    
+    def _merge_and_save_file_segments(self, output_file_name: str, output_dir: Path, 
+                                    temp_dir: Path, num_segments: int):
+        """
+        Merge all segments of a file and save as H5
+        
+        Args:
+            output_file_name: Output file name
+            output_dir: Output directory
+            temp_dir: Temporary directory containing segments
+            num_segments: Number of segments to merge
+        """
+        try:
+            all_segments = []
+            
+            # Load all segments
+            for seg_idx in range(num_segments):
+                segment_file = temp_dir / f"{output_file_name}_seg_{seg_idx}.npy"
+                if segment_file.exists():
+                    segment_events = np.load(segment_file)
+                    if len(segment_events) > 0:
+                        all_segments.append(segment_events)
+            
+            # Merge segments
+            if all_segments:
+                final_events = np.vstack(all_segments)
+                # Sort by timestamp
+                final_events = final_events[np.argsort(final_events[:, 0])]
+            else:
+                final_events = np.empty((0, 4))
+            
+            # Save as H5 file with same format as input
+            output_file_path = output_dir / output_file_name
+            self._save_events_to_h5(final_events, str(output_file_path))
+            
+        except Exception as e:
+            self.logger.error(f"Failed to merge segments for {output_file_name}: {e}")
 
 
 def main():
