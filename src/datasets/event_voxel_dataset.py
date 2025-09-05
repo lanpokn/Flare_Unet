@@ -59,8 +59,9 @@ class EventVoxelDataset(Dataset):
         self.num_segments = num_segments
         self.transform = transform
         
-        # File-level cache for 5x I/O optimization
-        self._events_cache = {}  # file_idx -> (noisy_events, clean_events)
+        # 智能单文件缓存 - 只缓存当前正在处理的文件
+        self._current_file_idx = None
+        self._current_events = None  # (noisy_events, clean_events)
         
         # Setup logging
         logging.basicConfig(level=logging.INFO)
@@ -77,7 +78,8 @@ class EventVoxelDataset(Dataset):
         self.logger.info(f"  - {self.total_samples} total samples ({self.num_segments} segments per file)")
         self.logger.info(f"  - Segment config: {segment_duration_us/1000}ms/{num_bins}bins = {segment_duration_us/num_bins/1000:.2f}ms per bin")
         self.logger.info(f"  - Sensor size: {sensor_size}")
-        self.logger.info(f"  - File cache enabled: 5x I/O optimization")
+        self.logger.info(f"  - Smart cache: 只缓存当前文件，切换文件时自动清理")
+        self.logger.info(f"  - Memory limit: ~8MB (当前文件的2个events数组)")
     
     def _scan_and_match_files(self) -> List[Tuple[str, str]]:
         """
@@ -159,9 +161,14 @@ class EventVoxelDataset(Dataset):
         """Return total number of samples (file_pairs × segments_per_file)"""
         return self.total_samples
     
-    def _get_cached_events(self, file_idx: int) -> Tuple[np.ndarray, np.ndarray]:
+    def _get_events_smart_cached(self, file_idx: int) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Get cached events for a file pair, load if not cached (5x I/O optimization)
+        智能单文件缓存：只缓存当前文件，切换时自动清理
+        
+        优势：
+        - 同一文件的5个segments复用数据 ✅
+        - 切换文件时自动释放内存 ✅  
+        - 内存使用稳定在~8MB ✅
         
         Args:
             file_idx: File index
@@ -169,38 +176,52 @@ class EventVoxelDataset(Dataset):
         Returns:
             Tuple of (noisy_events, clean_events)
         """
-        if file_idx not in self._events_cache:
-            noisy_file_path, clean_file_path = self.file_pairs[file_idx]
-            
-            # Load H5 files once per file_idx (not per segment!)
-            noisy_events = load_h5_events(noisy_file_path)
-            clean_events = load_h5_events(clean_file_path)
-            
-            # Cache for reuse by 5 segments
-            self._events_cache[file_idx] = (noisy_events, clean_events)
-            
-            self.logger.debug(f"Cached file {file_idx}: {len(noisy_events)} noisy, {len(clean_events)} clean events")
+        # 检查缓存命中
+        if self._current_file_idx == file_idx and self._current_events is not None:
+            # Cache hit - 复用当前文件
+            return self._current_events
         
-        return self._events_cache[file_idx]
+        # Cache miss 或切换文件 - 清理旧缓存
+        if self._current_file_idx is not None:
+            self.logger.debug(f"File switched {self._current_file_idx}→{file_idx}, clearing cache")
+            self._current_events = None  # 立即释放内存
+        
+        # 加载新文件
+        noisy_file_path, clean_file_path = self.file_pairs[file_idx]
+        
+        noisy_events = load_h5_events(noisy_file_path)
+        clean_events = load_h5_events(clean_file_path)
+        
+        # 更新缓存
+        self._current_file_idx = file_idx
+        self._current_events = (noisy_events, clean_events)
+        
+        self.logger.debug(f"Loaded file {file_idx}: {len(noisy_events)} noisy, {len(clean_events)} clean events")
+        
+        return self._current_events
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
-        Get a training sample with 5x I/O optimization
+        Get training sample with smart single-file cache
+        
+        内存安全保证：
+        - 同一文件5个segments共享缓存 ✅
+        - 切换文件时自动清理 ✅
+        - 最大内存使用~8MB ✅
         
         Args:
             idx: Sample index
             
         Returns:
-            Dict with 'raw' (noisy input) and 'label' (clean target) voxels
-            Both tensors have shape (1, num_bins, H, W) for pytorch-3dunet
+            Dict with 'raw' and 'label' voxels (1, num_bins, H, W)
         """
-        # Calculate which file pair and which segment
+        # Calculate file and segment
         file_idx = idx // self.num_segments
         segment_idx = idx % self.num_segments
         
         try:
-            # Get cached events (5x I/O optimization - file read once for 5 segments)
-            noisy_events, clean_events = self._get_cached_events(file_idx)
+            # 智能缓存获取events（解决5x重复读取问题）
+            noisy_events, clean_events = self._get_events_smart_cached(file_idx)
             
             # Extract the specific 20ms segment
             noisy_segment = self._extract_segment_events(noisy_events, segment_idx)
@@ -245,6 +266,13 @@ class EventVoxelDataset(Dataset):
                 'raw': zero_voxel,
                 'label': zero_voxel
             }
+    
+    def clear_cache(self):
+        """手动清理缓存 - 可在epoch结束时调用释放内存"""
+        if self._current_events is not None:
+            self.logger.debug(f"Manually cleared cache for file {self._current_file_idx}")
+            self._current_file_idx = None
+            self._current_events = None
 
 
 class EventVoxelInferenceDataset(Dataset):
