@@ -96,7 +96,7 @@ def events_to_voxel(events_np, num_bins=32, sensor_size=(480, 640), fixed_durati
     # Assign events to temporal bins using fixed intervals
     bin_indices = np.clip(((ts - t_min) / dt).astype(int), 0, num_bins - 1)
     
-    # Vectorized accumulation - much faster than Python loop
+    # Safe vectorized accumulation - avoiding memory leaks from numpy/torch interaction
     # Filter events within sensor bounds
     valid_mask = (xs >= 0) & (xs < sensor_size[1]) & (ys >= 0) & (ys < sensor_size[0])
     
@@ -106,9 +106,26 @@ def events_to_voxel(events_np, num_bins=32, sensor_size=(480, 640), fixed_durati
         valid_ys = ys[valid_mask] 
         valid_ps = ps[valid_mask]
         
-        # Vectorized accumulation using numpy advanced indexing
-        # This is equivalent to the Python loop but much faster
-        np.add.at(voxel.numpy(), (valid_bins, valid_ys, valid_xs), valid_ps)
+        # 安全的纯PyTorch向量化实现 - 避免numpy/torch内存交互问题
+        # Convert to torch tensors for pure PyTorch operations
+        bins_tensor = torch.from_numpy(valid_bins).long()
+        xs_tensor = torch.from_numpy(valid_xs).long() 
+        ys_tensor = torch.from_numpy(valid_ys).long()
+        ps_tensor = torch.from_numpy(valid_ps).float()
+        
+        # Use PyTorch's index_add_ for safe in-place accumulation
+        # Create linear indices: bin * H * W + y * W + x
+        linear_indices = bins_tensor * (sensor_size[0] * sensor_size[1]) + \
+                        ys_tensor * sensor_size[1] + xs_tensor
+        
+        # Reshape voxel to 1D for index_add_, then back to 3D
+        voxel_1d = voxel.view(-1)
+        voxel_1d.index_add_(0, linear_indices, ps_tensor)
+        # voxel retains its original shape due to view operation
+        
+        # Clean up temporary variables
+        del valid_bins, valid_xs, valid_ys, valid_ps, valid_mask
+        del bins_tensor, xs_tensor, ys_tensor, ps_tensor, linear_indices
     
     return voxel
 
