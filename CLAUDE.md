@@ -222,13 +222,14 @@ num_levels: 4               # 深度特征学习
 - 核心依赖: numpy, h5py, matplotlib, opencv-python, scipy, pandas, pyyaml
 - **Debug依赖**: OpenCV 4.10.0 + pandas 1.5.3 (professional_visualizer所需)
 
-### 快速启动 - **2025-09-04**
+### 快速启动 - **2025-09-06更新**
 ```bash
 cd /mnt/e/2025/event_flick_flare/Unet_main && eval "$(conda shell.bash hook)" && conda activate Umain
 
 # 立即可用 - 无需外部数据
-python main.py test --config configs/test_config.yaml --debug  # 评估checkpoint
-python main.py train --config configs/train_config.yaml --debug  # 调试训练
+python main.py test --config configs/test_config.yaml --debug     # 评估checkpoint
+python main.py test --config configs/test_config.yaml --baseline  # 编解码基线测试
+python main.py train --config configs/train_config.yaml --debug   # 调试训练
 ```
 
 ## 使用指南 - **2025-09-05 批量推理更新**
@@ -246,21 +247,36 @@ python main.py train --config configs/train_config.yaml
 python main.py train --config configs/train_config.yaml --debug
 ```
 
-### 测试 - **批量推理模式**
+### 测试 - **批量推理模式** - **2025-09-06更新**
 ```bash
 # 批量推理 (处理所有测试文件，保存去炫光结果)
 python main.py test --config configs/test_config.yaml
 
 # 批量推理 + 可视化debug模式 (可选)
 python main.py test --config configs/test_config.yaml --debug
+
+# Baseline模式 (仅编解码测试，不经过UNet网络) - **新增**
+python main.py test --config configs/test_config.yaml --baseline
+
+# Baseline + debug模式
+python main.py test --config configs/test_config.yaml --baseline --debug
 ```
 
-**核心功能** - **2025-09-05更新**:
+**核心功能** - **2025-09-06更新**:
 - ✅ **批量文件处理**: 自动处理test目录中所有H5文件
-- ✅ **输出目录管理**: 创建`输入目录名+output`并行目录结构
+- ✅ **输出目录管理**: 
+  - 正常模式: 创建`输入目录名+output`并行目录结构
+  - Baseline模式: 创建`输入目录名+baseline`并行目录结构
 - ✅ **文件名保持**: 输出文件名与输入文件名完全一致
 - ✅ **H5格式一致**: 输出H5文件保持与输入相同的events/t,x,y,p结构
 - ✅ **时间戳保持**: 保持原始时间范围，确保时序正确性
+
+**Baseline模式特性** - **2025-09-06新增**:
+- ✅ **跳过UNet处理**: 不加载模型，不进行网络推理
+- ✅ **纯编解码测试**: Events → Voxel → Events，测试编解码保真度
+- ✅ **性能基准**: 提供编解码baseline，用于对比UNet改进效果
+- ✅ **独立输出**: 保存到`*baseline`目录，与正常模式区分
+- ✅ **效率优化**: 跳过模型加载和GPU运算，处理速度更快
 
 ### 推理 - **待测试验证**
 ```bash

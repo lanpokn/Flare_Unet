@@ -114,22 +114,30 @@ class EventVoxelPipeline:
             self.logger.error(traceback.format_exc())
             return 1
     
-    def test_mode(self, config_path: str, debug: bool = False, debug_dir: str = 'debug_output') -> int:
+    def test_mode(self, config_path: str, debug: bool = False, debug_dir: str = 'debug_output', baseline: bool = False) -> int:
         """
         Testing mode - batch inference on test dataset, saving processed H5 files
         
-        Process each input H5 file through the trained model and save the denoised output
+        Two modes:
+        - Normal: Process through trained UNet model (saves to *output directory)  
+        - Baseline: Skip UNet, only encode-decode (saves to *baseline directory)
+        
+        Process each input H5 file and save the processed output
         with the same filename to a parallel output directory (input_dir + 'output').
         
         Args:
             config_path: Path to test configuration YAML
             debug: Enable debug mode with detailed visualization (optional)
             debug_dir: Directory for debug visualizations (optional)
+            baseline: Enable baseline mode (encode-decode only, no UNet) (optional)
             
         Returns:
             Exit code (0 = success, non-zero = error)
         """
-        mode_str = "DEBUG TESTING" if debug else "TESTING"
+        if baseline:
+            mode_str = "BASELINE TESTING" if not debug else "DEBUG BASELINE TESTING"
+        else:
+            mode_str = "DEBUG TESTING" if debug else "TESTING"
         self.logger.info(f"=== EVENT-VOXEL {mode_str} MODE ===")
         
         try:
@@ -155,21 +163,28 @@ class EventVoxelPipeline:
             else:
                 config['debug'] = {'enabled': False}
             
-            # Verify model checkpoint exists
-            model_path = config['model']['path']
-            if not Path(model_path).exists():
-                self.logger.error(f"Model checkpoint not found: {model_path}")
-                return 1
-            
-            self.logger.info("Starting custom evaluation...")
-            self.logger.info(f"Model: {config['model']['name']} ({config['model']['f_maps']} feature maps)")
-            self.logger.info(f"Checkpoint: {model_path}")
-            
-            # 创建训练工厂（仅用于创建模型和数据集）
-            training_factory = TrainingFactory(config)
-            
-            # 创建模型和数据集
-            model = training_factory.create_model()
+            # Model setup (skip in baseline mode)
+            model = None
+            if not baseline:
+                # Verify model checkpoint exists
+                model_path = config['model']['path']
+                if not Path(model_path).exists():
+                    self.logger.error(f"Model checkpoint not found: {model_path}")
+                    return 1
+                
+                self.logger.info("Starting custom evaluation...")
+                self.logger.info(f"Model: {config['model']['name']} ({config['model']['f_maps']} feature maps)")
+                self.logger.info(f"Checkpoint: {model_path}")
+                
+                # 创建训练工厂（仅用于创建模型和数据集）
+                training_factory = TrainingFactory(config)
+                
+                # 创建模型
+                model = training_factory.create_model()
+            else:
+                self.logger.info("Baseline mode: Skipping model loading")
+                # Still need training factory for dataset creation
+                training_factory = TrainingFactory(config)
             # For test mode: only create validation dataset (which is our test data)
             try:
                 _, test_dataset = training_factory.create_datasets()  # 使用val作为test
@@ -195,17 +210,18 @@ class EventVoxelPipeline:
             
             _, test_loader = training_factory.create_dataloaders(test_dataset, test_dataset)
             
-            # 加载checkpoint
+            # 加载checkpoint (skip in baseline mode)
             device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-            checkpoint = torch.load(model_path, map_location=device)
-            
-            if 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
-            else:
-                model.load_state_dict(checkpoint)
-            
-            model.to(device)
-            model.eval()
+            if not baseline:
+                checkpoint = torch.load(model_path, map_location=device)
+                
+                if 'model_state_dict' in checkpoint:
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                else:
+                    model.load_state_dict(checkpoint)
+                
+                model.to(device)
+                model.eval()
             
             # 评估模型
             total_loss = 0.0
@@ -215,7 +231,10 @@ class EventVoxelPipeline:
             # Get output directory configuration
             loader_config = config.get('loaders', {})
             input_dir = Path(loader_config.get('val_noisy_dir'))
-            output_dir = input_dir.parent / f"{input_dir.name}output"
+            if baseline:
+                output_dir = input_dir.parent / f"{input_dir.name}baseline"
+            else:
+                output_dir = input_dir.parent / f"{input_dir.name}output"
             output_dir.mkdir(parents=True, exist_ok=True)
             
             # Get inference parameters
@@ -250,7 +269,13 @@ class EventVoxelPipeline:
                             debug_config['debug_dir'], batch_idx  # 使用batch_idx作为epoch
                         )
                     
-                    outputs = model(inputs)
+                    # Baseline mode: skip UNet processing, use inputs as outputs (encode-decode only)
+                    if baseline:
+                        outputs = inputs.clone()  # Identity mapping (encode-decode baseline)
+                        if batch_idx == 0:  # Only log once to avoid spam
+                            self.logger.info("🔄 Baseline mode: Skipping UNet processing, using encode-decode only")
+                    else:
+                        outputs = model(inputs)
                     
                     # Debug可视化钩子 - 每5个batch可视化第1个
                     if debug_config.get('enabled', False) and batch_idx % 5 == 0:
@@ -275,13 +300,22 @@ class EventVoxelPipeline:
                             num_bins, num_segments, processed_files
                         )
                     
-                    loss = criterion(outputs, targets)
+                    # Calculate loss (or dummy loss for baseline mode)
+                    if baseline:
+                        # In baseline mode, loss is meaningless since output = input
+                        loss_value = 0.0
+                    else:
+                        loss = criterion(outputs, targets)
+                        loss_value = loss.item()
                     
-                    total_loss += loss.item()
+                    total_loss += loss_value
                     num_batches += 1
                     
                     if batch_idx % 10 == 0:
-                        self.logger.info(f"Batch {batch_idx}/{len(test_loader)}, Loss: {loss.item():.6f}")
+                        if baseline:
+                            self.logger.info(f"Batch {batch_idx}/{len(test_loader)} (Baseline mode)")
+                        else:
+                            self.logger.info(f"Batch {batch_idx}/{len(test_loader)}, Loss: {loss_value:.6f}")
             
             avg_loss = total_loss / num_batches if num_batches > 0 else float('inf')
             
@@ -291,17 +325,22 @@ class EventVoxelPipeline:
                 import shutil
                 shutil.rmtree(temp_dir)
             
-            self.logger.info("Batch inference completed successfully!")
-            self.logger.info(f"Average test loss: {avg_loss:.6f}")
+            if baseline:
+                self.logger.info("Baseline processing completed successfully!")
+                self.logger.info("(Baseline mode: encode-decode only, no UNet processing)")
+            else:
+                self.logger.info("Batch inference completed successfully!")
+                self.logger.info(f"Average test loss: {avg_loss:.6f}")
             self.logger.info(f"Processed {len(processed_files)} files")
             self.logger.info(f"Output directory: {output_dir}")
             
             # 保存结果
             results = {
-                'test_loss': avg_loss,
+                'test_loss': avg_loss if not baseline else None,
+                'mode': 'baseline' if baseline else 'normal',
                 'num_samples': len(test_dataset),
                 'num_files_processed': len(processed_files),
-                'model_path': model_path,
+                'model_path': model_path if not baseline else None,
                 'input_dir': str(input_dir),
                 'output_dir': str(output_dir)
             }
@@ -855,8 +894,11 @@ Examples:
   # Training
   python main.py train --config configs/train_config.yaml
   
-  # Testing  
+  # Testing (normal)
   python main.py test --config configs/test_config.yaml
+  
+  # Testing (baseline: encode-decode only)  
+  python main.py test --config configs/test_config.yaml --baseline
   
   # Inference
   python main.py inference --config configs/inference_config.yaml \\
@@ -883,6 +925,8 @@ Examples:
                            help='Enable debug mode with detailed visualization (runs only 1-2 batches)')
     test_parser.add_argument('--debug-dir', type=str, default='debug_output',
                            help='Directory for debug visualizations (default: debug_output)')
+    test_parser.add_argument('--baseline', action='store_true',
+                           help='Enable baseline mode: skip UNet processing, only encode-decode (saves to *baseline directory)')
     
     # Inference mode
     inference_parser = subparsers.add_parser('inference', help='Denoise event file')
@@ -906,7 +950,7 @@ Examples:
     if args.mode == 'train':
         return pipeline.train_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
     elif args.mode == 'test':
-        return pipeline.test_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
+        return pipeline.test_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'), getattr(args, 'baseline', False))
     elif args.mode == 'inference':
         return pipeline.inference_mode(args.config, args.input, args.output)
     else:
