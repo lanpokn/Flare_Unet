@@ -558,16 +558,17 @@ class EventVoxelPipeline:
             events_group = f.create_group('events')
             
             if len(events_np) > 0:
-                events_group.create_dataset('t', data=events_np[:, 0].astype(np.int64))
-                events_group.create_dataset('x', data=events_np[:, 1].astype(np.int16))  
-                events_group.create_dataset('y', data=events_np[:, 2].astype(np.int16))
-                events_group.create_dataset('p', data=events_np[:, 3].astype(np.int8))
+                # Use gzip compression level 9 to match input file format
+                events_group.create_dataset('t', data=events_np[:, 0].astype(np.int64), compression='gzip', compression_opts=9)
+                events_group.create_dataset('x', data=events_np[:, 1].astype(np.uint16), compression='gzip', compression_opts=9)  # Fix: uint16 to match input
+                events_group.create_dataset('y', data=events_np[:, 2].astype(np.uint16), compression='gzip', compression_opts=9)  # Fix: uint16 to match input
+                events_group.create_dataset('p', data=events_np[:, 3].astype(np.int8), compression='gzip', compression_opts=9)
             else:
-                # Empty datasets
-                events_group.create_dataset('t', data=np.array([], dtype=np.int64))
-                events_group.create_dataset('x', data=np.array([], dtype=np.int16))
-                events_group.create_dataset('y', data=np.array([], dtype=np.int16))
-                events_group.create_dataset('p', data=np.array([], dtype=np.int8))
+                # Empty datasets with same compression
+                events_group.create_dataset('t', data=np.array([], dtype=np.int64), compression='gzip', compression_opts=9)
+                events_group.create_dataset('x', data=np.array([], dtype=np.uint16), compression='gzip', compression_opts=9)
+                events_group.create_dataset('y', data=np.array([], dtype=np.uint16), compression='gzip', compression_opts=9)
+                events_group.create_dataset('p', data=np.array([], dtype=np.int8), compression='gzip', compression_opts=9)
     
     def _generate_inference_visualization(self, input_events: np.ndarray, output_events: np.ndarray, viz_config: dict):
         """Generate visualization for inference results (optional)"""

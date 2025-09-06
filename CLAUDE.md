@@ -277,6 +277,13 @@ python main.py test --config configs/test_config.yaml --baseline --debug
 - ✅ **性能基准**: 提供编解码baseline，用于对比UNet改进效果
 - ✅ **独立输出**: 保存到`*baseline`目录，与正常模式区分
 - ✅ **效率优化**: 跳过模型加载和GPU运算，处理速度更快
+- ✅ **格式兼容**: 使用gzip压缩和正确数据类型，与原始文件格式一致
+
+**重要修复** - **2025-09-06**:
+- **文件压缩问题**: 修复了baseline输出文件过大的问题
+- **根本原因**: 原始H5文件使用gzip压缩，而baseline保存函数没有压缩设置
+- **解决方案**: 在`main.py`的`_save_events_to_h5`中添加`compression='gzip', compression_opts=9`
+- **效果**: 文件大小从3.59倍变为正常大小，数据类型从int16改为uint16匹配输入
 
 ### 推理 - **待测试验证**
 ```bash
