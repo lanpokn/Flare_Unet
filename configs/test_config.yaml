@@ -37,7 +37,7 @@ model:
   dropout_prob: 0.1         # Match training
   
   # Path to trained model checkpoint (2250 iteration - latest available)
-  path: checkpoints/event_voxel_deflare/checkpoint_epoch_0000_iter_002250.pth
+  path: checkpoints/event_voxel_deflare/checkpoint_epoch_0006_iter_017500.pth
 
 # Predictor configuration
 predictor:

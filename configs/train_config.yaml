@@ -79,7 +79,7 @@ trainer:
   # Checkpointing
   checkpoint_dir: checkpoints/event_voxel_deflare
   # resume: null              # Path to resume from checkpoint (null = start from scratch)
-  resume: checkpoints/event_voxel_deflare/checkpoint_epoch_0000_iter_002250.pth
+  resume: checkpoints/event_voxel_deflare4/checkpoint_epoch_0000_iter_002250.pth
   # Training duration
   max_num_epochs: 50        # 正常训练50个epochs
   max_num_iterations: null  # 无iteration限制，按epoch训练
