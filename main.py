@@ -362,15 +362,17 @@ class EventVoxelPipeline:
             self.logger.error(traceback.format_exc())
             return 1
     
-    def inference_mode(self, config_path: str, input_file: str, output_file: str) -> int:
+    def inference_mode(self, config_path: str, input_path: str = None, output_path: str = None, debug: bool = False, debug_dir: str = None) -> int:
         """
-        Inference mode - custom end-to-end event denoising
+        Inference mode - batch denoise event files (no ground truth)
         Pipeline: H5 events → segments → voxels → model → denoised voxels → events → H5
         
         Args:
             config_path: Path to inference configuration YAML
-            input_file: Input H5 events file
-            output_file: Output H5 events file
+            input_path: Input directory or single file path (if None, use config)
+            output_path: Output directory or single file path (if None, use config)
+            debug: Enable debug visualization mode
+            debug_dir: Custom debug output directory
             
         Returns:
             Exit code (0 = success, non-zero = error)
@@ -382,126 +384,275 @@ class EventVoxelPipeline:
             config = self.config_loader.load_inference_config(config_path)
             self.logger.info(f"Loaded inference config from: {config_path}")
             
-            # Verify input file exists
-            if not Path(input_file).exists():
-                self.logger.error(f"Input file not found: {input_file}")
-                return 1
+            # Determine input/output paths
+            if input_path is None:
+                input_path = config.get('inference', {}).get('input_dir', 'DSEC_data/input')
+            if output_path is None:
+                output_path = config.get('inference', {}).get('output_dir', 'DSEC_data/output')
             
-            # Verify model checkpoint exists
-            model_path = config['model']['path']
-            if not Path(model_path).exists():
-                self.logger.error(f"Model checkpoint not found: {model_path}")
-                return 1
+            input_path = Path(input_path)
+            output_path = Path(output_path)
             
-            # Extract inference parameters
-            inf_config = config['inference']
-            sensor_size = tuple(inf_config['sensor_size'])
-            segment_duration_us = inf_config['segment_duration_us']
-            num_bins = inf_config['num_bins']
-            num_segments = inf_config['num_segments']
-            device = inf_config['device']
-            
-            self.logger.info(f"Input: {input_file}")
-            self.logger.info(f"Output: {output_file}")
-            self.logger.info(f"Model: {model_path}")
-            self.logger.info(f"Processing: {num_segments} segments × {segment_duration_us/1000}ms × {num_bins} bins")
-            self.logger.info(f"Device: {device}")
-            
-            # Step 1: Load model
-            self.logger.info("Loading trained model...")
-            model = self._load_model(config['model'], device)
-            
-            # Step 2: Load and segment input events
-            self.logger.info("Loading input events...")
-            events_np = load_h5_events(input_file)
-            self.logger.info(f"Loaded {len(events_np)} events")
-            
-            # Step 3: Process each segment
-            self.logger.info("Processing segments through denoising pipeline...")
-            denoised_segments = []
-            
-            for segment_idx in range(num_segments):
-                self.logger.info(f"Processing segment {segment_idx + 1}/{num_segments}...")
-                
-                # Extract segment events
-                segment_events = self._extract_segment_events(
-                    events_np, segment_idx, num_segments
-                )
-                
-                if len(segment_events) == 0:
-                    self.logger.warning(f"Segment {segment_idx} is empty, skipping")
-                    continue
-                
-                # Encode to voxel
-                input_voxel = events_to_voxel(
-                    segment_events,
-                    num_bins=num_bins,
-                    sensor_size=sensor_size,
-                    fixed_duration_us=segment_duration_us
-                )
-                
-                # Prepare tensor for model (add batch and channel dimensions)
-                input_tensor = input_voxel.unsqueeze(0).unsqueeze(0).to(device)  # (1, 1, 8, H, W)
-                
-                # Model inference
-                model.eval()
-                with torch.no_grad():
-                    denoised_tensor = model(input_tensor)
-                
-                # Remove batch and channel dimensions
-                denoised_voxel = denoised_tensor.squeeze(0).squeeze(0).cpu()  # (8, H, W)
-                
-                # Decode back to events
-                denoised_events = voxel_to_events(
-                    denoised_voxel,
-                    total_duration=segment_duration_us,
-                    sensor_size=sensor_size
-                )
-                
-                # Adjust timestamps to global timeline
-                if len(denoised_events) > 0:
-                    t_min_original = events_np[:, 0].min()
-                    t_max_original = events_np[:, 0].max()
-                    total_duration_original = t_max_original - t_min_original
-                    
-                    segment_start_global = t_min_original + segment_idx * (total_duration_original / num_segments)
-                    
-                    # Adjust timestamps
-                    denoised_events[:, 0] = denoised_events[:, 0] + segment_start_global - denoised_events[:, 0].min()
-                    
-                    denoised_segments.append(denoised_events)
-                
-                self.logger.info(f"Segment {segment_idx + 1}: {len(segment_events)} → {len(denoised_events) if len(denoised_events) > 0 else 0} events")
-            
-            # Step 4: Merge all segments
-            if denoised_segments:
-                final_events = np.vstack(denoised_segments)
-                # Sort by timestamp
-                final_events = final_events[np.argsort(final_events[:, 0])]
+            # Check if single file or directory processing
+            if input_path.is_file():
+                return self._inference_single_file(config, input_path, output_path, debug, debug_dir)
+            elif input_path.is_dir():
+                return self._inference_batch_files(config, input_path, output_path, debug, debug_dir)
             else:
-                self.logger.warning("No events produced by denoising pipeline")
-                final_events = np.empty((0, 4))
-            
-            # Step 5: Save output
-            self.logger.info(f"Saving {len(final_events)} denoised events to: {output_file}")
-            self._save_events_to_h5(final_events, output_file)
-            
-            # Optional: Visualization
-            if config.get('visualization', {}).get('enabled', False):
-                self._generate_inference_visualization(
-                    events_np, final_events, config['visualization']
-                )
-            
-            self.logger.info("Inference completed successfully!")
-            self.logger.info(f"Event count: {len(events_np)} → {len(final_events)}")
-            
-            return 0
+                raise FileNotFoundError(f"Input path not found: {input_path}")
+                
+        except Exception as e:
+            self.logger.error(f"Inference failed: {str(e)}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return 1
             
         except Exception as e:
             self.logger.error(f"Inference mode error: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
             return 1
+    
+    def _inference_single_file(self, config: dict, input_file: Path, output_file: Path, debug: bool, debug_dir: str) -> int:
+        """
+        Process single file inference
+        """
+        self.logger.info(f"Single file inference: {input_file.name}")
+        
+        # Verify model checkpoint exists
+        model_path = config['model']['path']
+        if not Path(model_path).exists():
+            self.logger.error(f"Model checkpoint not found: {model_path}")
+            return 1
+        
+        # Extract inference parameters
+        inf_config = config['inference']
+        sensor_size = tuple(inf_config['sensor_size'])
+        segment_duration_us = inf_config['segment_duration_us']
+        num_bins = inf_config['num_bins']
+        num_segments = inf_config['num_segments']
+        device = inf_config['device']
+        
+        # Create output directory
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.logger.info(f"Input: {input_file}")
+        self.logger.info(f"Output: {output_file}")
+        self.logger.info(f"Model: {model_path}")
+        self.logger.info(f"Processing: {num_segments} segments × {segment_duration_us/1000}ms × {num_bins} bins")
+        self.logger.info(f"Device: {device}")
+        
+        # Load model
+        self.logger.info("Loading trained model...")
+        model = self._load_model(config['model'], device)
+        
+        # Load input events
+        self.logger.info("Loading input events...")
+        events_np = load_h5_events(str(input_file))
+        self.logger.info(f"Loaded {len(events_np)} events")
+        
+        # Process segments
+        self.logger.info("Processing segments through denoising pipeline...")
+        denoised_segments = []
+        debug_data = []  # Store debug data for each segment
+        
+        for segment_idx in range(num_segments):
+            self.logger.info(f"Processing segment {segment_idx + 1}/{num_segments}...")
+            
+            # Extract segment events
+            segment_events = self._extract_segment_events(
+                events_np, segment_idx, num_segments
+            )
+            
+            if len(segment_events) == 0:
+                self.logger.warning(f"Segment {segment_idx} is empty, skipping")
+                continue
+            
+            # Encode to voxel
+            input_voxel = events_to_voxel(
+                segment_events,
+                num_bins=num_bins,
+                sensor_size=sensor_size,
+                fixed_duration_us=segment_duration_us
+            )
+            
+            # Prepare tensor for model
+            input_tensor = input_voxel.unsqueeze(0).unsqueeze(0).to(device)  # (1, 1, 8, H, W)
+            
+            # Model inference
+            model.eval()
+            with torch.no_grad():
+                output_tensor = model(input_tensor)
+            
+            # Remove batch and channel dimensions
+            output_voxel = output_tensor.squeeze(0).squeeze(0).cpu()  # (8, H, W)
+            
+            # Decode back to events
+            output_events = voxel_to_events(
+                output_voxel,
+                total_duration=segment_duration_us,
+                sensor_size=sensor_size
+            )
+            
+            # Adjust timestamps to global timeline
+            if len(output_events) > 0:
+                t_min_original = events_np[:, 0].min()
+                t_max_original = events_np[:, 0].max()
+                total_duration_original = t_max_original - t_min_original
+                
+                segment_start_global = t_min_original + segment_idx * (total_duration_original / num_segments)
+                
+                # Adjust timestamps
+                output_events[:, 0] = output_events[:, 0] + segment_start_global - output_events[:, 0].min()
+                
+                denoised_segments.append(output_events)
+            
+            # Store debug data if needed
+            if debug:
+                debug_data.append({
+                    'segment_idx': segment_idx,
+                    'input_events': segment_events,
+                    'input_voxel': input_voxel,
+                    'output_events': output_events,
+                    'output_voxel': output_voxel
+                })
+            
+            self.logger.info(f"Segment {segment_idx + 1}: {len(segment_events)} → {len(output_events) if len(output_events) > 0 else 0} events")
+        
+        # Merge all segments
+        if denoised_segments:
+            final_events = np.vstack(denoised_segments)
+            final_events = final_events[np.argsort(final_events[:, 0])]
+        else:
+            self.logger.warning("No events produced by denoising pipeline")
+            final_events = np.empty((0, 4))
+        
+        # Save output
+        self.logger.info(f"Saving {len(final_events)} denoised events to: {output_file}")
+        self._save_events_to_h5(final_events, str(output_file))
+        
+        # Debug visualization if enabled
+        if debug and debug_data:
+            self._generate_inference_debug_visualization(
+                debug_data, input_file.stem, debug_dir or 'debug_output',
+                sensor_size, segment_duration_us
+            )
+        
+        self.logger.info(f"Inference completed: {len(events_np)} → {len(final_events)} events")
+        return 0
+    
+    def _inference_batch_files(self, config: dict, input_dir: Path, output_dir: Path, debug: bool, debug_dir: str) -> int:
+        """
+        Process batch directory inference
+        """
+        self.logger.info(f"Batch inference: {input_dir} → {output_dir}")
+        
+        # Find all H5 files
+        h5_files = list(input_dir.glob("*.h5"))
+        if not h5_files:
+            self.logger.error(f"No H5 files found in: {input_dir}")
+            return 1
+        
+        self.logger.info(f"Found {len(h5_files)} H5 files to process")
+        
+        # Create output directory
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Process each file
+        processed_files = []
+        failed_files = []
+        
+        for i, input_file in enumerate(h5_files, 1):
+            self.logger.info(f"Processing file {i}/{len(h5_files)}: {input_file.name}")
+            
+            output_file = output_dir / input_file.name
+            
+            try:
+                result = self._inference_single_file(config, input_file, output_file, debug, debug_dir)
+                if result == 0:
+                    processed_files.append(input_file.name)
+                else:
+                    failed_files.append(input_file.name)
+            except Exception as e:
+                self.logger.error(f"Failed to process {input_file.name}: {e}")
+                failed_files.append(input_file.name)
+                continue
+        
+        # Summary
+        self.logger.info("Batch inference completed!")
+        self.logger.info(f"Successfully processed: {len(processed_files)} files")
+        if failed_files:
+            self.logger.warning(f"Failed files: {len(failed_files)} - {failed_files}")
+        self.logger.info(f"Output directory: {output_dir}")
+        
+        return 0 if not failed_files else 1
+    
+    def _generate_inference_debug_visualization(self, debug_data: list, file_stem: str, debug_dir: str, sensor_size: tuple, segment_duration_us: int):
+        """
+        Generate debug visualization for inference (no ground truth)
+        Similar to test debug but without target comparisons
+        """
+        from src.data_processing.professional_visualizer import visualize_events_and_voxel
+        
+        debug_output_dir = Path(debug_dir)
+        debug_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Process first few segments for visualization (to avoid too many files)
+        segments_to_viz = min(3, len(debug_data))
+        
+        for i in range(segments_to_viz):
+            data = debug_data[i]
+            segment_idx = data['segment_idx']
+            
+            # Create debug folder for this file and segment
+            viz_dir = debug_output_dir / f"inference_{file_stem}_seg_{segment_idx}"
+            viz_dir.mkdir(parents=True, exist_ok=True)
+            
+            try:
+                # Input events visualization
+                input_events_dir = viz_dir / "1_input_events"
+                if len(data['input_events']) > 0:
+                    visualize_events_and_voxel(
+                        data['input_events'],
+                        data['input_voxel'],
+                        sensor_size,
+                        str(input_events_dir),
+                        f"input_seg_{segment_idx}"
+                    )
+                
+                # Output events visualization
+                output_events_dir = viz_dir / "2_output_events"
+                if len(data['output_events']) > 0:
+                    visualize_events_and_voxel(
+                        data['output_events'],
+                        data['output_voxel'],
+                        sensor_size,
+                        str(output_events_dir),
+                        f"output_seg_{segment_idx}"
+                    )
+                
+                # Summary info
+                with open(viz_dir / "debug_summary.txt", 'w') as f:
+                    f.write(f"📊 Inference Debug Summary - {file_stem}\n")
+                    f.write(f"Segment: {segment_idx}\n")
+                    f.write(f"Input events: {len(data['input_events'])}\n")
+                    f.write(f"Output events: {len(data['output_events'])}\n")
+                    f.write(f"Event ratio: {len(data['output_events'])/len(data['input_events']):.3f}\n")
+                    f.write(f"Sensor size: {sensor_size}\n")
+                    f.write(f"Segment duration: {segment_duration_us/1000}ms\n")
+                    
+                    # Voxel statistics
+                    input_voxel = data['input_voxel']
+                    output_voxel = data['output_voxel']
+                    f.write(f"\n📈 Voxel Statistics:\n")
+                    f.write(f"Input - mean: {input_voxel.mean():.4f}, std: {input_voxel.std():.4f}\n")
+                    f.write(f"Output - mean: {output_voxel.mean():.4f}, std: {output_voxel.std():.4f}\n")
+                    
+            except Exception as e:
+                self.logger.warning(f"Debug visualization failed for segment {segment_idx}: {e}")
+                continue
+        
+        self.logger.info(f"🎨 Inference debug visualization saved to: {debug_output_dir}")
     
     def _load_model(self, model_config: dict, device: str):
         """Load trained UNet3D model using training factory"""
@@ -930,13 +1081,17 @@ Examples:
                            help='Enable baseline mode: skip UNet processing, only encode-decode (saves to *baseline directory)')
     
     # Inference mode
-    inference_parser = subparsers.add_parser('inference', help='Denoise event file')
+    inference_parser = subparsers.add_parser('inference', help='Batch denoise event files (no ground truth)')
     inference_parser.add_argument('--config', required=True,
                                 help='Path to inference configuration YAML')
-    inference_parser.add_argument('--input', required=True,
-                                help='Input H5 events file')
-    inference_parser.add_argument('--output', required=True,
-                                help='Output H5 events file')
+    inference_parser.add_argument('--input', required=False,
+                                help='Input directory or file (if not specified, use config)')
+    inference_parser.add_argument('--output', required=False,
+                                help='Output directory or file (if not specified, use config)')
+    inference_parser.add_argument('--debug', action='store_true',
+                                help='Enable debug visualization mode (no ground truth comparisons)')
+    inference_parser.add_argument('--debug-dir', default='debug_output',
+                                help='Debug output directory (default: debug_output)')
     
     args = parser.parse_args()
     
@@ -953,7 +1108,8 @@ Examples:
     elif args.mode == 'test':
         return pipeline.test_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'), getattr(args, 'baseline', False))
     elif args.mode == 'inference':
-        return pipeline.inference_mode(args.config, args.input, args.output)
+        return pipeline.inference_mode(args.config, getattr(args, 'input', None), getattr(args, 'output', None), 
+                                      getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
     else:
         print(f"Unknown mode: {args.mode}")
         return 1

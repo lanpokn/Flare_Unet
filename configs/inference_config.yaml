@@ -1,98 +1,56 @@
-# Inference Configuration for Standalone Event Deflare
-# Used for processing single H5 event files without ground truth
+# Inference Configuration for Event-Voxel DEFLARE
+# Used for batch processing H5 event files without ground truth
 # Updated for local data_simu paths
 
 # Model configuration (must match trained model exactly)
 model:
-  name: ResidualUNet3D
-  # Architecture parameters (MUST match training config)
+  name: TrueResidualUNet3D   # ✅ 使用真正残差学习 (与训练配置匹配)
+  backbone: ResidualUNet3D   # 底层网络类型
+  
+  # Architecture parameters (MUST match training config exactly)
   in_channels: 1
-  out_channels: 1  
-  f_maps: 8                 # Match training: reduced from 32 to 8
-  layer_order: gcr
-  num_groups: 2             # Match training: reduced from 8 to 2
-  num_levels: 2             # Match training: reduced from 4 to 2
-  final_sigmoid: true       # 强制设为true，代码中会替换为Identity
-  conv_kernel_size: 3
-  pool_kernel_size: 2
+  out_channels: 1
+  f_maps: [32, 64, 128, 256] # 当前配置: 4层, 707万参数 (与训练完全匹配)
+  num_levels: 4              # 最大深度4层
+  layer_order: gcr           # Group normalization + Conv + ReLU
+  num_groups: 8              # GroupNorm分组数
+  conv_padding: 1            # 卷积padding
+  dropout_prob: 0.1          # Dropout概率
   
   # Path to trained model checkpoint  
-  path: checkpoints/event_voxel_deflare/best_checkpoint.pytorch
+  path: checkpoints/event_voxel_deflare/checkpoint_epoch_0027_iter_077500.pth
 
 # Inference-specific configuration
 inference:
-  # Data processing parameters (must match training)
-  sensor_size: [480, 640]      # Sensor resolution (H, W)
-  segment_duration_us: 20000   # 20ms per segment  
-  num_bins: 8                  # 8 temporal bins per segment
-  num_segments: 5              # 5 segments per 100ms input file
+  # Input/Output directories (default paths, can be overridden by command line)
+  input_dir: "DSEC_data/input"   # Default input directory
+  output_dir: "DSEC_data/output" # Default output directory
+  
+  # Data processing parameters (must match training exactly)
+  sensor_size: [480, 640]       # Sensor resolution (H, W)
+  segment_duration_us: 20000    # 20ms per segment  
+  num_bins: 8                   # 8 temporal bins per segment
+  num_segments: 5               # 5 segments per 100ms input file
   
   # Device configuration
-  device: cuda                 # Use GPU if available, fallback to CPU
+  device: cuda                  # Use GPU if available
   
   # Processing parameters
-  batch_size: 1                # Process segments individually for safety
-  
-  # Output configuration
-  output_format: h5            # Save denoised events as H5 files
-  
-  # Reconstruction parameters for voxel→events conversion
-  reconstruction:
-    # Total duration for reconstructed events (matches segment processing)
-    total_duration_us: 20000   # 20ms per segment
-    
-    # Decoding strategy
-    decoding_method: uniform_random  # Uniform random distribution within time bins
-    
-    # Quality control
-    preserve_event_count: false  # Allow event count to vary (denoising effect)
-    min_events_per_bin: 0       # Minimum events per time bin
-    max_events_per_bin: 10000   # Maximum events per time bin (prevent explosion)
+  batch_size: 1                 # Process segments individually
 
-# Visualization options (optional, for debugging)
-visualization:
-  enabled: false                # Enable visualization output
-  output_dir: inference_debug   # Directory for visualization outputs
+# Debug visualization (controlled by --debug flag)
+debug:
+  enabled: false               # Controlled by command line --debug flag
+  output_dir: debug_output     # Directory for debug visualizations
+  max_segments_to_visualize: 3 # Max segments per file to visualize
   
-  # What to visualize
-  show_input_events: true       # Visualize input events
-  show_output_events: true      # Visualize denoised events  
-  show_voxel_comparison: true   # Show input vs output voxels
-  
-  # Visualization parameters
-  segment_to_visualize: 1       # Which segment to visualize (0-4)
-  
-# Logging configuration
-logging:
-  level: INFO                   # Logging level (DEBUG, INFO, WARNING, ERROR)
-  output_file: inference.log   # Log file path (null = console only)
-  
-# Performance options
-performance:
-  # Memory management
-  clear_cache: true             # Clear GPU cache between segments
-  
-  # Multi-threading
-  num_workers: 2                # Number of workers for data loading
-  
-  # Optimization
-  use_mixed_precision: false    # Use automatic mixed precision (experimental)
+# Device configuration
+device: cuda                    # Use GPU for inference
 
-# Error handling
-error_handling:
-  # What to do on processing errors
-  skip_failed_segments: true    # Skip segments that fail to process
-  fallback_to_input: false     # If processing fails, output original events
-  
-  # Validation
-  validate_output: true         # Basic validation of output events
-  
-# File I/O settings
-io:
-  # Temporary files
-  temp_dir: /tmp/event_inference  # Temporary directory for processing
-  cleanup_temp: true              # Clean up temporary files after processing
-  
-  # Output file naming
-  output_suffix: _denoised        # Suffix for output files
-  preserve_filename: true         # Keep original filename with suffix
+# Logging
+logger:
+  name: TensorBoardLogger
+  log_dir: logs/inference
+
+# Random seed for reproducibility
+manual_seed: 42
