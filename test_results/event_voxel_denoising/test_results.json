@@ -1,9 +1,9 @@
 {
-  "test_loss": null,
-  "mode": "baseline",
+  "test_loss": 0.25660471167252397,
+  "mode": "normal",
   "num_samples": 250,
   "num_files_processed": 50,
-  "model_path": null,
+  "model_path": "checkpoints/event_voxel_deflare/checkpoint_epoch_0020_iter_057500.pth",
   "input_dir": "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_flare_events_test",
-  "output_dir": "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_flare_events_testbaseline"
+  "output_dir": "/mnt/e/2025/event_flick_flare/Unet_main/data_simu/physics_method/background_with_flare_events_testoutput"
 }

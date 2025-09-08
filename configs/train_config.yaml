@@ -69,17 +69,17 @@ optimizer:
   weight_decay: 0.00001     # L2 regularization
 
 # Learning rate scheduler
-lr_scheduler:
-  name: MultiStepLR
-  milestones: [10, 20, 30]  # Epochs to reduce LR
-  gamma: 0.2                # LR reduction factor
+# lr_scheduler:
+#   name: MultiStepLR
+#   milestones: [10, 20, 30]  # Epochs to reduce LR
+#   gamma: 0.2                # LR reduction factor
 
 # Training process configuration
 trainer:
   # Checkpointing
   checkpoint_dir: checkpoints/event_voxel_deflare
   # resume: null              # Path to resume from checkpoint (null = start from scratch)
-  resume: checkpoints/event_voxel_deflare/checkpoint_epoch_0009_iter_027500.pth
+  resume: checkpoints/event_voxel_deflare/checkpoint_epoch_0027_iter_077500.pth
   # Training duration
   max_num_epochs: 50        # 正常训练50个epochs
   max_num_iterations: null  # 无iteration限制，按epoch训练

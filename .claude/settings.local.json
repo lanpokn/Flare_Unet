@@ -24,7 +24,8 @@
       "WebFetch(domain:gitee.com)",
       "Bash(cp:*)",
       "Bash(nvidia-smi:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(dmesg:*)"
     ],
     "deny": []
   }
