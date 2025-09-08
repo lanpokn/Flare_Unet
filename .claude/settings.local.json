@@ -25,7 +25,12 @@
       "Bash(cp:*)",
       "Bash(nvidia-smi:*)",
       "Bash(cat:*)",
-      "Bash(dmesg:*)"
+      "Bash(dmesg:*)",
+      "Bash(apt list:*)",
+      "Bash(chmod:*)",
+      "Bash(cmake:*)",
+      "Bash(make:*)",
+      "Bash(/mnt/e/2025/event_flick_flare/Unet_main/ext/PFD/build_wsl/PFD_WSL)"
     ],
     "deny": []
   }
