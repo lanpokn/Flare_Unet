@@ -713,7 +713,11 @@ def visualize_complete_pipeline(input_events, input_voxel, output_events, output
     """
     viz = ProfessionalEventVisualizer(output_dir)
     
-    print(f"=== Complete Pipeline Visualization: 6 Results (Segment {segment_idx}: 10-30ms) ===")
+    # Calculate time range for display
+    segment_duration = 20  # 20ms per segment
+    start_ms = segment_idx * segment_duration
+    end_ms = (segment_idx + 1) * segment_duration
+    print(f"=== Complete Pipeline Visualization: 6 Results (Segment {segment_idx}: {start_ms}-{end_ms}ms) ===")
     
     # Extract segments for memory optimization
     input_segment, input_start, segment_duration = _extract_time_segment(input_events, segment_idx)
