@@ -49,6 +49,8 @@ H5 Events (100ms) → 5×20ms Segments → Voxel (1,8,480,640) → TrueResidualU
 │   ├── training/
 │   │   ├── training_factory.py     # ResidualUNet3D模型创建
 │   │   └── custom_trainer.py       # 自定义训练循环
+│   ├── tools/                      # 可视化工具
+│   │   └── event_video_generator.py # H5事件数据视频生成器
 │   └── utils/
 │       └── config_loader.py
 ├── configs/                        # 训练配置系统
@@ -289,6 +291,12 @@ python main.py test --config configs/test_config.yaml --baseline --debug
 ```bash
 python main.py inference --config configs/inference_config.yaml \
   --input data_simu/some_file.h5 --output results/deflared_events.h5
+```
+
+### H5事件视频生成 - **2025-09-09新增**
+```bash
+# 生成事件可视化视频（白背景+红蓝映射，2.5ms/帧，输出到debug_output）
+python src/tools/event_video_generator.py --input "path/to/events.h5"
 ```
 
 ### 训练日志可视化 - **2025-01-03新增**

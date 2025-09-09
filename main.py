@@ -362,10 +362,14 @@ class EventVoxelPipeline:
             self.logger.error(traceback.format_exc())
             return 1
     
-    def inference_mode(self, config_path: str, input_path: str = None, output_path: str = None, debug: bool = False, debug_dir: str = None) -> int:
+    def inference_mode(self, config_path: str, input_path: str = None, output_path: str = None, debug: bool = False, debug_dir: str = None, baseline: bool = False) -> int:
         """
         Inference mode - batch denoise event files (no ground truth)
         Pipeline: H5 events → segments → voxels → model → denoised voxels → events → H5
+        
+        Two modes:
+        - Normal: Process through trained UNet model
+        - Baseline: Skip UNet, only encode-decode (saves to *baseline directory)
         
         Args:
             config_path: Path to inference configuration YAML
@@ -373,11 +377,13 @@ class EventVoxelPipeline:
             output_path: Output directory or single file path (if None, use config)
             debug: Enable debug visualization mode
             debug_dir: Custom debug output directory
+            baseline: Enable baseline mode (encode-decode only, no UNet)
             
         Returns:
             Exit code (0 = success, non-zero = error)
         """
-        self.logger.info("=== EVENT-VOXEL INFERENCE MODE ===")
+        mode_str = "BASELINE INFERENCE" if baseline else "INFERENCE"
+        self.logger.info(f"=== EVENT-VOXEL {mode_str} MODE ===")
         
         try:
             # Load and validate inference configuration
@@ -388,16 +394,22 @@ class EventVoxelPipeline:
             if input_path is None:
                 input_path = config.get('inference', {}).get('input_dir', 'DSEC_data/input')
             if output_path is None:
-                output_path = config.get('inference', {}).get('output_dir', 'DSEC_data/output')
+                default_output = config.get('inference', {}).get('output_dir', 'DSEC_data/output')
+                if baseline:
+                    # Add baseline suffix for baseline mode
+                    default_output_path = Path(default_output)
+                    output_path = str(default_output_path.parent / f"{default_output_path.name}baseline")
+                else:
+                    output_path = default_output
             
             input_path = Path(input_path)
             output_path = Path(output_path)
             
             # Check if single file or directory processing
             if input_path.is_file():
-                return self._inference_single_file(config, input_path, output_path, debug, debug_dir)
+                return self._inference_single_file(config, input_path, output_path, debug, debug_dir, baseline)
             elif input_path.is_dir():
-                return self._inference_batch_files(config, input_path, output_path, debug, debug_dir)
+                return self._inference_batch_files(config, input_path, output_path, debug, debug_dir, baseline)
             else:
                 raise FileNotFoundError(f"Input path not found: {input_path}")
                 
@@ -413,15 +425,19 @@ class EventVoxelPipeline:
             self.logger.error(traceback.format_exc())
             return 1
     
-    def _inference_single_file(self, config: dict, input_file: Path, output_file: Path, debug: bool, debug_dir: str) -> int:
+    def _inference_single_file(self, config: dict, input_file: Path, output_file: Path, debug: bool, debug_dir: str, baseline: bool = False) -> int:
         """
         Process single file inference
-        """
-        self.logger.info(f"Single file inference: {input_file.name}")
         
-        # Verify model checkpoint exists
+        Args:
+            baseline: If True, skip UNet processing and only do encode-decode
+        """
+        mode_str = "baseline" if baseline else "normal"
+        self.logger.info(f"Single file inference ({mode_str}): {input_file.name}")
+        
+        # Verify model checkpoint exists (skip in baseline mode)
         model_path = config['model']['path']
-        if not Path(model_path).exists():
+        if not baseline and not Path(model_path).exists():
             self.logger.error(f"Model checkpoint not found: {model_path}")
             return 1
         
@@ -438,13 +454,18 @@ class EventVoxelPipeline:
         
         self.logger.info(f"Input: {input_file}")
         self.logger.info(f"Output: {output_file}")
-        self.logger.info(f"Model: {model_path}")
+        if not baseline:
+            self.logger.info(f"Model: {model_path}")
         self.logger.info(f"Processing: {num_segments} segments × {segment_duration_us/1000}ms × {num_bins} bins")
         self.logger.info(f"Device: {device}")
+        if baseline:
+            self.logger.info("Baseline mode: Skipping model loading")
         
-        # Load model
-        self.logger.info("Loading trained model...")
-        model = self._load_model(config['model'], device)
+        # Load model (skip in baseline mode)
+        model = None
+        if not baseline:
+            self.logger.info("Loading trained model...")
+            model = self._load_model(config['model'], device)
         
         # Load input events
         self.logger.info("Loading input events...")
@@ -476,16 +497,22 @@ class EventVoxelPipeline:
                 fixed_duration_us=segment_duration_us
             )
             
-            # Prepare tensor for model
-            input_tensor = input_voxel.unsqueeze(0).unsqueeze(0).to(device)  # (1, 1, 8, H, W)
-            
-            # Model inference
-            model.eval()
-            with torch.no_grad():
-                output_tensor = model(input_tensor)
-            
-            # Remove batch and channel dimensions
-            output_voxel = output_tensor.squeeze(0).squeeze(0).cpu()  # (8, H, W)
+            # Baseline mode: skip UNet processing, use input as output (encode-decode only)
+            if baseline:
+                output_voxel = input_voxel.clone()  # Identity mapping for baseline
+                if segment_idx == 0:  # Only log once to avoid spam
+                    self.logger.info("🔄 Baseline mode: Skipping UNet processing, using encode-decode only")
+            else:
+                # Prepare tensor for model
+                input_tensor = input_voxel.unsqueeze(0).unsqueeze(0).to(device)  # (1, 1, 8, H, W)
+                
+                # Model inference
+                model.eval()
+                with torch.no_grad():
+                    output_tensor = model(input_tensor)
+                
+                # Remove batch and channel dimensions
+                output_voxel = output_tensor.squeeze(0).squeeze(0).cpu()  # (8, H, W)
             
             # Decode back to events
             output_events = voxel_to_events(
@@ -541,11 +568,15 @@ class EventVoxelPipeline:
         self.logger.info(f"Inference completed: {len(events_np)} → {len(final_events)} events")
         return 0
     
-    def _inference_batch_files(self, config: dict, input_dir: Path, output_dir: Path, debug: bool, debug_dir: str) -> int:
+    def _inference_batch_files(self, config: dict, input_dir: Path, output_dir: Path, debug: bool, debug_dir: str, baseline: bool = False) -> int:
         """
         Process batch directory inference
+        
+        Args:
+            baseline: If True, skip UNet processing and only do encode-decode
         """
-        self.logger.info(f"Batch inference: {input_dir} → {output_dir}")
+        mode_str = "baseline" if baseline else "normal"
+        self.logger.info(f"Batch inference ({mode_str}): {input_dir} → {output_dir}")
         
         # Find all H5 files
         h5_files = list(input_dir.glob("*.h5"))
@@ -568,7 +599,7 @@ class EventVoxelPipeline:
             output_file = output_dir / input_file.name
             
             try:
-                result = self._inference_single_file(config, input_file, output_file, debug, debug_dir)
+                result = self._inference_single_file(config, input_file, output_file, debug, debug_dir, baseline)
                 if result == 0:
                     processed_files.append(input_file.name)
                 else:
@@ -1092,6 +1123,8 @@ Examples:
                                 help='Enable debug visualization mode (no ground truth comparisons)')
     inference_parser.add_argument('--debug-dir', default='debug_output',
                                 help='Debug output directory (default: debug_output)')
+    inference_parser.add_argument('--baseline', action='store_true',
+                                help='Enable baseline mode: skip UNet processing, only encode-decode (saves to *baseline directory)')
     
     args = parser.parse_args()
     
@@ -1109,7 +1142,7 @@ Examples:
         return pipeline.test_mode(args.config, getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'), getattr(args, 'baseline', False))
     elif args.mode == 'inference':
         return pipeline.inference_mode(args.config, getattr(args, 'input', None), getattr(args, 'output', None), 
-                                      getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'))
+                                      getattr(args, 'debug', False), getattr(args, 'debug_dir', 'debug_output'), getattr(args, 'baseline', False))
     else:
         print(f"Unknown mode: {args.mode}")
         return 1
