@@ -1113,3 +1113,4 @@ Debug输出: debug_output_pfds/pfds_{filename}_seg_0/  # 每个文件一个可�
 **核心突破**: 
 1. **UNet残差学习**: 让网络从完美恒等映射开始，专注学习需要去除的炫光
 2. **PFDs传统去噪**: 基于极性变化的高效逐事件去噪算法，20-30%正常压缩率
+3. **DAVIS成对可视化**: src/tools/davis_paired_visualization.py，适配346×260分辨率，生成input/target并排比较视频
