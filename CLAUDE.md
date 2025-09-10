@@ -303,6 +303,9 @@ python src/tools/datasimu_video_generation.py
 
 # DSEC批量视频生成（DSEC_data真实数据）
 python src/tools/dsec_video_generation.py
+
+# EVK4完整可视化生成 - **2025-09-10新增**
+python src/tools/evk4_complete_visualization.py  # 自动生成input/target/baseline/inputpfds/unet3d全部结果对比视频
 ```
 
 **Data Simu工具特性**:
