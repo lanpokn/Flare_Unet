@@ -218,11 +218,31 @@ num_levels: 4               # 深度特征学习
 
 ## 环境配置
 
-### GPU环境: Umain
-- Python 3.9
-- PyTorch 2.3.0 + CUDA 12.1 + pytorch-3dunet
-- 核心依赖: numpy, h5py, matplotlib, opencv-python, scipy, pandas, pyyaml
-- **Debug依赖**: OpenCV 4.10.0 + pandas 1.5.3 (professional_visualizer所需)
+### 验证工作环境配置
+**已验证配置** (2025-09-19):
+- **Python**: 3.9  
+- **PyTorch**: 2.4.0 + CUDA 支持 ✅
+- **pytorch-3dunet**: 1.9.1 ✅ (核心3D UNet模型)
+- **安装方式**: 纯conda安装，避免包冲突
+- **GPU支持**: CUDA正常工作，模型成功加载和推理
+
+**快速安装** (推荐，纯conda方案):
+```bash
+# 1. 删除旧环境 (如果存在)
+conda deactivate && conda env remove -n Umain2
+
+# 2. 一次性创建环境并安装所有包
+conda create -n Umain2 python=3.9 pytorch torchvision pytorch-cuda=12.1 pytorch-3dunet=1.9.1 numpy scipy matplotlib pandas h5py opencv scikit-image pyyaml tqdm tensorboard -c pytorch -c nvidia -c conda-forge
+
+# 3. 激活并验证
+conda activate Umain2 && python -c "import torch; from pytorch3dunet.unet3d.model import ResidualUNet3D; print('✅ All OK')"
+```
+
+**验证命令**:
+```bash
+python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+python -c "from pytorch3dunet.unet3d.model import ResidualUNet3D; print('pytorch-3dunet: OK')"
+```
 
 ### 快速启动 - **2025-09-06更新**
 ```bash

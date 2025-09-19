@@ -11,46 +11,37 @@
 
 ## 环境安装
 
-### 1. 创建Conda虚拟环境
+### 推荐方法: 纯conda安装 (已验证)
 
 ```bash
-# 创建名为Umain的虚拟环境 (Python 3.8)
-conda create -n Umain python=3.9 -y
+# 1. 删除旧环境 (如果存在)
+conda deactivate && conda env remove -n Umain2
 
-# conda activate Umain
+# 2. 一次性创建环境并安装所有包
+conda create -n Umain2 python=3.9 pytorch torchvision pytorch-cuda=12.1 pytorch-3dunet=1.9.1 numpy scipy matplotlib pandas h5py opencv scikit-image pyyaml tqdm tensorboard -c pytorch -c nvidia -c conda-forge
 
-# conda install -c pytorch -c nvidia -c conda-forge pytorch pytorch-cuda=12.1 pytorch-3dunet
-
-# pip install numpy h5py matplotlib opencv-python scipy pandas pyyaml scikit-image tqdm
-
-
-# 激活虚拟环境
-conda activate Umain
+# 3. 激活并验证
+conda activate Umain2 && python -c "import torch; from pytorch3dunet.unet3d.model import ResidualUNet3D; print('✅ All OK')"
 ```
 
-### 2. 安装PyTorch (GPU版本，兼容3DUnet)
+### 备用方法: 环境文件克隆
 
 ```bash
-# 安装支持CUDA 12.1的PyTorch
-conda install -c pytorch -c nvidia -c conda-forge pytorch pytorch-cuda=12.1
+# 如果有environment.yml文件
+conda env create -f environment.yml -n Umain2
+conda activate Umain2
+
+# 验证安装
+python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
 ```
 
-### 3. 安装核心依赖
+### 已验证环境规格
 
-```bash
-# 安装数据处理和可视化依赖
-pip install numpy h5py matplotlib opencv-python scipy pandas pyyaml scikit-image
-```
-
-### 4. 验证安装
-
-```bash
-# 测试GPU支持
-python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
-
-# 测试所有依赖
-python -c "import numpy, torch, h5py, matplotlib, cv2, scipy, pandas, yaml, skimage; print('All dependencies OK')"
-```
+- **Python**: 3.9
+- **PyTorch**: 2.4.0 + CUDA支持 ✅  
+- **pytorch-3dunet**: 1.9.1 ✅
+- **安装方式**: 纯conda，避免版本冲突
+- **状态**: GPU推理和权重加载已验证 (2025-09-19)
 
 ## 快速开始
 
