@@ -42,11 +42,12 @@ class EVK4CompleteVisualizer:
         
         # 预期的子目录列表
         self.expected_dirs = [
-            "input",      # 原始含炫光数据
-            "target",     # 目标去炫光数据  
-            "baseline",   # Baseline结果(编解码only)
-            "inputpfds",  # PFD处理结果
-            "unet3d"      # UNet3D处理结果
+            "input",        # 原始含炫光数据
+            "target",       # 目标去炫光数据  
+            "baseline",     # Baseline结果(编解码only)
+            "inputpfds",    # PFD处理结果
+            "unet3d",       # UNet3D处理结果 (标准版本)
+            "unet3d_simple" # UNet3D处理结果 (simple版本)
         ]
         
         # 创建视频生成器实例
