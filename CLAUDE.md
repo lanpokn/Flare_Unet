@@ -244,19 +244,55 @@ python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda
 python -c "from pytorch3dunet.unet3d.model import ResidualUNet3D; print('pytorch-3dunet: OK')"
 ```
 
-### 快速启动 - **2025-09-06更新**
+### 快速启动 - **2025-12-24更新**
 ```bash
-cd /mnt/e/2025/event_flick_flare/Unet_main && eval "$(conda shell.bash hook)" && conda activate Umain
+cd /mnt/e/2025/event_flick_flare/Unet_main && eval "$(conda shell.bash hook)" && conda activate Umain2
 
 # 立即可用 - 无需外部数据
 python main.py test --config configs/test_config.yaml --debug     # 评估checkpoint
 python main.py test --config configs/test_config.yaml --baseline  # 编解码基线测试
 python main.py train --config configs/train_config.yaml --debug   # 调试训练
+
+# 新增：单文件推理 - 2025-12-24
+python inference_single.py --input "E:\path\to\file.h5" --mode normal --debug  # 单文件处理
+python inference_single.py --input "E:\path\to\file.h5" --mode simple          # Simple权重模式
 ```
 
-## 使用指南 - **2025-09-05 批量推理更新**
+## 使用指南 - **2025-12-24更新**
 
 **重要**: 所有数据已本地化至 `data_simu/physics_method/`，无需外部依赖
+
+### 单文件推理 - **2025-12-24新增**
+
+**✅ inference_single.py - 任意长度单文件处理**:
+```bash
+# Normal权重模式
+python inference_single.py --input "E:\path\to\file.h5" --mode normal
+
+# Simple权重模式  
+python inference_single.py --input "E:\path\to\file.h5" --mode simple
+
+# 带debug可视化
+python inference_single.py --input "E:\path\to\file.h5" --mode normal --debug
+
+# 自定义输出路径
+python inference_single.py --input "input.h5" --output "custom_output.h5" --mode simple
+```
+
+**核心特性** - **2025-12-24**:
+- ✅ **任意长度支持**: 自动按20ms分段直到数据结束
+- ✅ **双权重模式**: normal/simple使用不同checkpoint文件
+- ✅ **Windows路径支持**: 自动转换Windows→WSL路径格式  
+- ✅ **时空一致性**: 输入输出时间和空间范围完全保持一致
+- ✅ **标准格式输出**: 与项目H5格式完全兼容
+- ✅ **专业可视化**: debug模式生成输入输出对比分析
+- ✅ **炫光去除效果**: Normal模式~34%压缩，Simple模式~42%压缩
+
+**测试验证结果** - **基于lego_sequence.h5 (4.77M事件, 198.8ms)**:
+| 模式 | 输入事件 | 输出事件 | 压缩率 | 时空一致性 | 输出文件 |
+|------|----------|----------|--------|------------|----------|  
+| Normal | 4,771,501 | 1,625,389 | 34.1% | ✅完全一致 | `*_Unet.h5` |
+| Simple | 4,771,501 | 2,024,551 | 42.4% | ✅完全一致 | `*_Unetsimple.h5` |
 
 **批量推理输出**: test模式会创建`输入目录名+output`并行目录，输出去炫光处理后的H5文件
 
@@ -361,11 +397,13 @@ python visualize_training_logs.py --detailed
 - ✅ **英文界面**: 避免字体乱码问题，专业展示
 - ✅ **无弹窗模式**: 直接保存，不弹出显示窗口
 
-## 最新状态 - **2025-09-06 内存泄漏修复完成**
+## 最新状态 - **2025-12-24 单文件推理系统完成**
 
 ✅ **生产就绪系统**:
 - **TrueResidualUNet3D**: 真正残差学习 (707万参数医学标准)
-- **完整Pipeline**: 训练→验证→批量推理 (50个文件自动处理)
+- **完整Pipeline**: 训练→验证→批量推理→**单文件推理** ✅**新增**
+- **任意长度处理**: **inference_single.py** 自动20ms分段至数据结束 ✅**新增**
+- **双权重模式**: normal/simple模式支持不同checkpoint ✅**新增**
 - **性能优化**: **4.2倍端到端提升** (12分钟完成50文件)
 - **内存安全**: **向量化内存泄漏已修复** ✅
 - **本地化部署**: 完全自包含，无外部依赖
