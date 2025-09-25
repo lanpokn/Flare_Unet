@@ -43,7 +43,8 @@
       "Bash(/mnt/e/2025/event_flick_flare/Unet_main/ext/PFD/build_wsl/PFD_WSL /tmp/tmp4xrp_b8c.txt /tmp/test_fixed.txt 25000 25000 1 3 0 0)",
       "Bash(/mnt/e/2025/event_flick_flare/Unet_main/ext/PFD/build_wsl/PFD_WSL /tmp/tmp4xrp_b8c.txt /tmp/test_fixed2.txt 25000 25000 1 3 0 0)",
       "Bash(./PFDs_WSL:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": []
   }

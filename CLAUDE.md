@@ -354,6 +354,9 @@ python main.py inference --config configs/inference_config.yaml \
 # 单文件视频生成（白背景+红蓝映射，2.5ms/帧）
 python src/tools/event_video_generator.py --input "path/to/events.h5"
 
+# 快速视频生成 - Lego序列（199帧，15fps，1ms/帧）
+python src/tools/event_video_generator.py --input "/mnt/e/2025/event_flick_flare/experiments/3D_reconstruction/datasets/lego/events_h5/lego_sequence.h5" --frame_duration_ms 1.0 --fps 15 --sensor_size 480 640
+
 # Data Simu批量视频生成（physics_method测试集）
 python src/tools/datasimu_video_generation.py
 
