@@ -1,0 +1,56 @@
+# Inference Configuration for Event-Voxel DEFLARE - FULL VERSION
+# Used for batch processing H5 event files without ground truth
+# Dataset: datasimu2/physics_full_method (Full version with enhanced data)
+
+# Model configuration (must match trained model exactly)
+model:
+  name: TrueResidualUNet3D   # ✅ 使用真正残差学习 (与训练配置匹配)
+  backbone: ResidualUNet3D   # 底层网络类型
+  
+  # Architecture parameters (MUST match training config exactly)
+  in_channels: 1
+  out_channels: 1
+  f_maps: [32, 64, 128, 256] # 当前配置: 4层, 707万参数 (与训练完全匹配)
+  num_levels: 4              # 最大深度4层
+  layer_order: gcr           # Group normalization + Conv + ReLU
+  num_groups: 8              # GroupNorm分组数
+  conv_padding: 1            # 卷积padding
+  dropout_prob: 0.1          # Dropout概率
+  
+  # Path to trained model checkpoint (FULL VERSION)
+  path: checkpoints/event_voxel_deflare_full/checkpoint_epoch_0032_iter_076250.pth
+
+# Inference-specific configuration
+inference:
+  # Input/Output directories for EVK4 full processing
+  input_dir: "EVK4/input"        # EVK4 input directory
+  output_dir: "EVK4/unet3d_full" # Output to unet3d_full directory
+  
+  # Data processing parameters (must match training exactly)
+  sensor_size: [480, 640]       # Sensor resolution (H, W)
+  segment_duration_us: 20000    # 20ms per segment  
+  num_bins: 8                   # 8 temporal bins per segment
+  num_segments: 5               # 5 segments per 100ms input file
+  
+  # Device configuration
+  device: cuda                  # Use GPU if available
+  
+  # Processing parameters
+  batch_size: 1                 # Process segments individually
+
+# Debug visualization (controlled by --debug flag)
+debug:
+  enabled: false               # Controlled by command line --debug flag
+  output_dir: debug_output     # Directory for debug visualizations
+  max_segments_to_visualize: 3 # Max segments per file to visualize
+  
+# Device configuration
+device: cuda                    # Use GPU for inference
+
+# Logging - FULL VERSION
+logger:
+  name: TensorBoardLogger
+  log_dir: logs/inference_full
+
+# Random seed for reproducibility
+manual_seed: 42
