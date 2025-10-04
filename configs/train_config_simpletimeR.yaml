@@ -1,0 +1,121 @@
+# Training Configuration for Event-Voxel DEFLARE (炫光去除) with Custom Training System - FULL VERSION
+# Task: Remove flare from background_with_flare_events → background_with_light_events
+# Dataset: datasimu2/physics_full_method (Full version with enhanced data)
+
+# Data loading configuration for custom training system
+loaders:
+  # Full deflare dataset paths (datasimu2/physics_full_method)
+  train_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_flare_events"
+  train_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_light_events"
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_flare_events_test"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_light_events_test"
+  
+  # DataLoader parameters
+  batch_size: 1           # 单样本batch (避免显存爆炸)
+  num_workers: 0          # 单线程避免并发问题
+  
+  # Event-Voxel conversion parameters  
+  sensor_size: [480, 640]         # DSEC sensor resolution
+  segment_duration_us: 20000      # 20ms per segment
+  num_bins: 8                     # 8 temporal bins per segment
+  num_segments: 5                 # 5 segments per 100ms file
+  
+  # Data transforms (handled by EventVoxelDataset internally)
+  transform: null
+
+# Dataset-specific configuration (HDF5Dataset parameters)
+# Note: Our test data is already in (8, 480, 640) format - no additional processing needed
+
+# 真正残差学习模型配置 - 2025-09-26 FULL VERSION
+model:
+  name: TrueResidualUNet3D  # ✅ 使用真正残差学习 (解决背景丢失问题)
+  backbone: ResidualUNet3D  # 底层网络类型
+  
+  # Input/output channels
+  in_channels: 1            # Single channel input (voxel grid)
+  out_channels: 1           # Single channel output (deflared voxel)
+  
+  # Architecture parameters (全部传递给TrueResidualUNet3D)
+  f_maps: [32, 64, 128, 256]    # 当前配置: 4层, ~707万参数 (医学标准)
+  num_levels: 4                 # 最大深度4层 (5层会导致尺寸过小bug)
+
+  # 可选大模型配置 (大显存环境) 
+  # f_maps: [64, 128, 256, 512]  # 大模型配置: 4层, ~2800万参数
+  # num_levels: 4                # 固定4层深度 (避免5层尺寸bug)
+  
+  layer_order: gcr          # Group normalization + Conv + ReLU
+  num_groups: 8             # GroupNorm分组数 (重要参数!)
+  conv_padding: 1           # 卷积padding
+  dropout_prob: 0.1         # Dropout概率
+  
+  # 注意: final_sigmoid在TrueResidualUNet3D中硬编码为False，然后替换为Identity()
+  
+  # 真正残差学习的关键优势:
+  # 1. 零初始化: 初始完美恒等映射 (output = input + 0)
+  # 2. 背景保护: 100%保持背景信息，专注学习炫光去除
+  # 3. 稳定训练: 从理想状态开始，梯度流畅
+  # 4. 数值域: 支持实数域输出 (-∞, +∞)，无激活函数限制
+
+# Loss function configuration
+loss:
+  name: MSELoss             # Mean Squared Error for regression (deflare)
+  # Alternative losses for experimentation:
+  # name: L1Loss            # Mean Absolute Error  
+  # name: SmoothL1Loss      # Less sensitive to outliers
+
+# Optimizer configuration
+optimizer:
+  name: Adam
+  learning_rate: 0.0002     # Learning rate
+  weight_decay: 0.00001     # L2 regularization
+
+# Learning rate scheduler
+lr_scheduler:
+  name: MultiStepLR
+  milestones: [10, 20, 30]  # Epochs to reduce LR
+  gamma: 0.2                # LR reduction factor
+
+# Training process configuration
+trainer:
+  # Checkpointing - FULL VERSION
+  checkpoint_dir: checkpoints/event_voxel_deflare_simple_timeRandom_method
+  resume: checkpoints/event_voxel_deflare_simple_timeRandom_method/checkpoint_epoch_0016_iter_037500.pth              # Path to resume from checkpoint (null = start from scratch)
+  # resume: checkpoints/event_voxel_deflare_full/checkpoint_epoch_0025_iter_068750.pth
+
+  # Training duration
+  max_num_epochs: 50        # 正常训练50个epochs
+  max_num_iterations: null  # 无iteration限制，按epoch训练
+  
+  # Validation and logging
+  validate_after_iters: 1250  # 每1250个iteration验证一次 (快速反馈)
+  log_after_iters: 250       # 每250个iteration记录日志到tensorboard
+  max_num_workers: 0         # 单线程避免并发问题
+  
+  # Early stopping (optional)
+  # eval_score_higher_is_better: false  # For loss-based metrics (MSE, L1)
+
+# Evaluation metrics during training  
+eval_metric:
+  name: MSE                 # Use MSE instead of MeanSquaredError
+  # Additional metrics can be added:
+  # - name: PSNR            # Peak Signal-to-Noise Ratio
+
+# Logging and monitoring
+logger:
+  name: TensorBoardLogger
+  log_dir: logs/event_voxel_denoising_full
+
+# Device configuration
+device: cuda               # 必须使用GPU，不允许CPU模式
+
+# Random seed for reproducibility  
+manual_seed: 42
+
+# Data format specifications (for pytorch-3dunet compatibility)
+# Input format: (batch_size, channels, depth, height, width)
+# Our format: (batch_size, 1, 8, 480, 640) 
+#   - batch_size: Variable
+#   - channels: 1 (single voxel channel)  
+#   - depth: 8 (temporal bins for 20ms segment)
+#   - height: 480 (sensor height)
+#   - width: 640 (sensor width)

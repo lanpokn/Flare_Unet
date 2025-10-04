@@ -44,7 +44,14 @@
       "Bash(/mnt/e/2025/event_flick_flare/Unet_main/ext/PFD/build_wsl/PFD_WSL /tmp/tmp4xrp_b8c.txt /tmp/test_fixed2.txt 25000 25000 1 3 0 0)",
       "Bash(./PFDs_WSL:*)",
       "Bash(awk:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(pkg-config:*)",
+      "Bash(python3:*)",
+      "Read(//mnt/e/2025/event_flick_flare/**)",
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir testdata/efr_test_input --debug --debug_dir debug_output_efr)",
+      "Read(//tmp/**)",
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 src/tools/event_video_generator.py --input testdata/efr_test_inputefr/composed_00003_bg_flare.h5 --output debug_output_efr/efr_output_video.mp4 --frame_duration_ms 2.5 --fps 30)",
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir testdata/efr_test_input --debug)"
     ],
     "deny": []
   }
