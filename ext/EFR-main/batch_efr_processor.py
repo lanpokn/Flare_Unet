@@ -170,13 +170,13 @@ class BatchEFRProcessor:
             self.logger.debug(f"Converting {h5_file_path} to {output_txt_path}")
             self.logger.debug(f"Loaded {len(events_np):,} events")
 
-            # Time adjustment: ensure positive timestamps starting from 0
+            # Time adjustment: ensure timestamps start from 0
             self.min_t_offset = events_np[:, 0].min()
-            if self.min_t_offset < 0:
-                self.logger.debug(f"Adjusting timestamps: min_t={self.min_t_offset}")
+            if self.min_t_offset != 0:  # ✅ Adjust if not starting from 0
+                self.logger.debug(f"Adjusting timestamps: min_t={self.min_t_offset} → 0")
                 events_np[:, 0] = events_np[:, 0] - self.min_t_offset
             else:
-                self.min_t_offset = 0
+                self.logger.debug("Timestamps already start from 0, no adjustment needed")
 
             # ⭐ Auto-calculate time range for EFR processing
             t_min_us = float(events_np[:, 0].min())  # Convert to Python float

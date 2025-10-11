@@ -3,20 +3,21 @@
 DSEC Dataset Generator - 从长炫光文件中智能提取100ms段并处理
 
 基于Linus哲学：
-- 数据结构正确: 随机选择 → 安全读取 → 100ms提取 → 多方法处理 → 统一可视化
+- 数据结构正确: 顺序处理 → 安全读取 → 100ms提取 → 多方法处理 → 统一可视化
 - 消除特殊情况: 统一处理流程，复用现有工具
-- 实用主义: 内存安全，避免溢出
+- 实用主义: 内存安全，避免溢出，断点续存
 
 功能：
-1. 从flare_events文件夹随机选择长H5文件
-2. 智能读取：先读时间戳，再只读取需要的100ms范围（避免内存溢出）
-3. 保存到DSEC_data/input（复用现有命名方式）
-4. 运行所有处理方法：UNet3D, PFD, Baseline, EFR
-5. 生成可视化到DSEC_data/visualize
+1. 从flare_events文件夹按顺序读取长H5文件
+2. 每个文件内按时间顺序采样（间隔400ms）：0-100ms, 400-500ms, 800-900ms, ...
+3. 智能读取：先读时间戳，再只读取需要的100ms范围（避免内存溢出）
+4. 断点续存：解析已有文件名，自动跳过已处理的段
+5. 运行所有处理方法：UNet3D, PFD, Baseline, EFR
+6. 生成可视化到DSEC_data/visualize
 
 Usage:
-    python src/tools/generate_dsec_dataset.py --num_samples 5
-    python src/tools/generate_dsec_dataset.py --num_samples 10 --debug
+    python src/tools/generate_dsec_dataset.py  # 顺序处理所有文件，自动断点续存
+    python src/tools/generate_dsec_dataset.py --debug
 """
 
 import os
@@ -29,7 +30,7 @@ from pathlib import Path
 from datetime import datetime
 import subprocess  # 仅UNet3D inference需要
 import argparse
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict, Set
 
 # 添加项目路径
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -91,15 +92,14 @@ class DSECDatasetGenerator:
         print(f"📂 Flare source: {self.flare_dir}")
         print(f"📂 Output base: {self.output_base}")
 
-    def get_random_flare_file(self) -> Path:
-        """随机选择一个炫光文件"""
-        flare_files = list(self.flare_dir.glob("*.h5"))
+    def get_sorted_flare_files(self) -> List[Path]:
+        """获取排序后的炫光文件列表（顺序处理）"""
+        flare_files = sorted(list(self.flare_dir.glob("*.h5")))
         if not flare_files:
             raise FileNotFoundError(f"No H5 files found in {self.flare_dir}")
 
-        selected = random.choice(flare_files)
-        print(f"📄 Selected flare file: {selected.name}")
-        return selected
+        print(f"📄 Found {len(flare_files)} flare files (sorted)")
+        return flare_files
 
     def get_time_range_safe(self, file_path: Path) -> Tuple[int, int]:
         """安全获取H5文件的时间范围（不加载全部数据）"""
@@ -111,6 +111,74 @@ class DSECDatasetGenerator:
 
         print(f"  Time range: {t_min/1000:.1f}ms - {t_max/1000:.1f}ms (duration: {(t_max-t_min)/1000:.1f}ms)")
         return t_min, t_max
+
+    def generate_time_samples(self, t_min: int, t_max: int) -> List[int]:
+        """
+        生成时间采样点列表（间隔400ms）
+
+        采样策略：0-100ms, 400-500ms, 800-900ms, 1200-1300ms, ...
+
+        Args:
+            t_min: 文件起始时间（微秒）
+            t_max: 文件结束时间（微秒）
+
+        Returns:
+            采样起始时间列表（微秒）
+        """
+        samples = []
+        segment_duration = 100000  # 100ms = 100,000μs
+        interval = 400000  # 400ms = 400,000μs 间隔
+
+        current_start = t_min
+        while current_start + segment_duration <= t_max:
+            samples.append(current_start)
+            current_start += interval
+
+        print(f"  Generated {len(samples)} time samples (400ms interval)")
+        return samples
+
+    def parse_existing_progress(self) -> Dict[str, Set[int]]:
+        """
+        解析DSEC_data/input中已有文件，推断处理进度（断点续存）
+
+        文件名格式: real_flare_{source}_t{time}ms_{datetime}.h5
+        提取信息: source_name, start_time_us
+
+        Returns:
+            {source_name: {start_time_us1, start_time_us2, ...}}
+        """
+        progress = {}
+
+        for h5_file in self.input_dir.glob("real_flare_*.h5"):
+            try:
+                # 解析文件名
+                # 例如: real_flare_zurich_city_03_a_t34867ms_20251011_120721.h5
+                stem = h5_file.stem
+
+                # 提取source_name和time
+                parts = stem.split('_t')
+                if len(parts) >= 2:
+                    source_name = parts[0].replace('real_flare_', '')
+                    time_part = parts[1].split('ms_')[0]
+                    start_time_ms = int(time_part)
+                    start_time_us = start_time_ms * 1000
+
+                    if source_name not in progress:
+                        progress[source_name] = set()
+                    progress[source_name].add(start_time_us)
+            except Exception as e:
+                print(f"  ⚠️  Warning: Failed to parse {h5_file.name}: {e}")
+                continue
+
+        # 打印已有进度
+        if progress:
+            print(f"📊 Existing progress (断点续存):")
+            for source, times in sorted(progress.items()):
+                print(f"  {source}: {len(times)} segments processed")
+        else:
+            print(f"📊 No existing progress found, starting from scratch")
+
+        return progress
 
     def extract_100ms_segment_safe(self, file_path: Path, start_time_us: int) -> np.ndarray:
         """
@@ -285,43 +353,35 @@ class DSECDatasetGenerator:
                 except Exception as e:
                     print(f"    ❌ {method_name} visualization failed: {e}")
 
-    def generate_single_sample(self):
-        """生成单个DSEC样本（完整流程）"""
-        print("\n" + "="*80)
-        print("🎯 Generating new DSEC sample...")
+    def process_single_segment(self, source_file: Path, start_time: int) -> bool:
+        """
+        处理单个100ms段（完整流程）
 
-        # Step 1: 随机选择炫光文件
-        source_file = self.get_random_flare_file()
+        Args:
+            source_file: 源H5文件路径
+            start_time: 起始时间（微秒）
 
-        # Step 2: 安全获取时间范围
-        t_min, t_max = self.get_time_range_safe(source_file)
+        Returns:
+            是否成功处理
+        """
+        print(f"  ⏱️  Processing segment: {start_time/1000:.1f}ms - {(start_time+100000)/1000:.1f}ms")
 
-        # Step 3: 随机选择100ms起始时间
-        max_start = t_max - 100000  # 确保有完整的100ms
-        if max_start <= t_min:
-            print(f"  ⚠️  File too short, using entire duration")
-            start_time = t_min
-        else:
-            start_time = random.randint(t_min, max_start)
-
-        print(f"  🎲 Random start time: {start_time/1000:.1f}ms")
-
-        # Step 4: 内存安全地提取100ms段
+        # Step 1: 内存安全地提取100ms段
         events_segment = self.extract_100ms_segment_safe(source_file, start_time)
 
         if len(events_segment) == 0:
-            print(f"  ❌ No events in segment, skipping...")
+            print(f"    ❌ No events in segment, skipping...")
             return False
 
-        # Step 5: 生成文件名并保存到input
+        # Step 2: 生成文件名并保存到input
         filename = self.generate_filename(source_file, start_time)
         input_h5 = self.input_dir / filename
 
-        print(f"  💾 Saving to: {filename}")
+        print(f"    💾 Saving to: {filename}")
         self.save_h5_events(events_segment, input_h5)
 
-        # Step 6: 运行所有处理方法
-        print(f"\n  🔄 Processing with all methods...")
+        # Step 3: 运行所有处理方法
+        print(f"    🔄 Processing with all methods...")
 
         # UNet3D
         unet_h5 = self.output_dir / filename
@@ -339,35 +399,104 @@ class DSECDatasetGenerator:
         baseline_h5 = self.outputbaseline_dir / filename
         self.run_baseline_processing(input_h5, baseline_h5)
 
-        # Step 7: 生成可视化
-        print(f"\n  📊 Generating visualizations...")
+        # Step 4: 生成可视化
+        print(f"    📊 Generating visualizations...")
         self.generate_visualizations(
             filename, input_h5, unet_h5, pfd_h5, efr_h5, baseline_h5
         )
 
-        print(f"\n✅ Sample generation completed: {filename}")
+        print(f"    ✅ Segment completed: {filename}")
         return True
 
-    def generate_batch(self, num_samples: int):
-        """批量生成DSEC样本"""
-        print(f"\n🚀 Starting batch generation: {num_samples} samples")
+    def generate_batch_sequential(self):
+        """
+        顺序批量生成DSEC样本（带断点续存）
+
+        处理流程：
+        1. 按文件名排序遍历所有长炫光文件
+        2. 每个文件内按时间顺序采样（间隔400ms）
+        3. 自动跳过已处理的段（断点续存）
+        """
+        print(f"\n🚀 Starting sequential batch generation with checkpoint resume")
         print("="*80)
 
-        success_count = 0
-        for i in range(num_samples):
-            print(f"\n[Sample {i+1}/{num_samples}]")
-            if self.generate_single_sample():
-                success_count += 1
+        # Step 1: 获取排序后的文件列表
+        flare_files = self.get_sorted_flare_files()
 
+        # Step 2: 解析已有进度
+        progress = self.parse_existing_progress()
+
+        # Step 3: 遍历每个文件
+        total_processed = 0
+        total_skipped = 0
+
+        for file_idx, source_file in enumerate(flare_files, 1):
+            print(f"\n{'='*80}")
+            print(f"📁 File [{file_idx}/{len(flare_files)}]: {source_file.name}")
+            print(f"{'='*80}")
+
+            source_name = source_file.stem
+
+            # 获取时间范围
+            try:
+                t_min, t_max = self.get_time_range_safe(source_file)
+            except Exception as e:
+                print(f"  ❌ Failed to read time range: {e}")
+                continue
+
+            # 生成采样点
+            time_samples = self.generate_time_samples(t_min, t_max)
+
+            if len(time_samples) == 0:
+                print(f"  ⚠️  No valid time samples, skipping file")
+                continue
+
+            # 获取已处理的时间点
+            processed_times = progress.get(source_name, set())
+
+            # 遍历每个采样点
+            file_processed = 0
+            file_skipped = 0
+
+            for sample_idx, start_time in enumerate(time_samples, 1):
+                print(f"\n  [Segment {sample_idx}/{len(time_samples)}]")
+
+                # 断点续存：跳过已处理的
+                if start_time in processed_times:
+                    print(f"    ⏭️  Skipping t={start_time/1000:.1f}ms (already processed)")
+                    file_skipped += 1
+                    total_skipped += 1
+                    continue
+
+                # 处理新的采样点
+                try:
+                    if self.process_single_segment(source_file, start_time):
+                        file_processed += 1
+                        total_processed += 1
+                        # 更新进度（内存中记录，避免重复处理）
+                        if source_name not in progress:
+                            progress[source_name] = set()
+                        progress[source_name].add(start_time)
+                except Exception as e:
+                    print(f"    ❌ Failed to process segment: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            print(f"\n  📊 File summary: {file_processed} new, {file_skipped} skipped")
+
+        # Final summary
         print("\n" + "="*80)
-        print(f"🎉 Batch generation completed!")
-        print(f"📊 Success: {success_count}/{num_samples} samples")
+        print(f"🎉 Sequential batch generation completed!")
+        print(f"📊 Total processed: {total_processed} new segments")
+        print(f"⏭️  Total skipped: {total_skipped} existing segments")
         print(f"📂 Output: {self.output_base}")
+        print("="*80)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DSEC Dataset Generator - Memory-safe 100ms extraction and processing")
-    parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate")
+    parser = argparse.ArgumentParser(
+        description="DSEC Dataset Generator - Sequential processing with checkpoint resume"
+    )
     parser.add_argument("--flare_dir", default="/mnt/e/2025/event_flick_flare/main/data/flare_events",
                        help="Flare events directory (WSL format)")
     parser.add_argument("--output_base", default="DSEC_data", help="Output base directory")
@@ -381,7 +510,8 @@ def main():
         debug=args.debug
     )
 
-    generator.generate_batch(args.num_samples)
+    # 顺序批处理（自动断点续存）
+    generator.generate_batch_sequential()
 
 
 if __name__ == "__main__":
