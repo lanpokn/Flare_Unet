@@ -5,10 +5,10 @@
 # Data loading configuration for custom training system
 loaders:
   # Full deflare dataset paths (datasimu2/physics_full_method)
-  train_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_flare_events"
-  train_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_light_events"
-  val_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_flare_events_test"
-  val_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/simple_timeRandom_method/background_with_light_events_test"
+  train_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/physics_noRandom_method/background_with_flare_events"
+  train_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/physics_noRandom_method/background_with_light_events"
+  val_noisy_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/physics_noRandom_method/background_with_flare_events_test"
+  val_clean_dir: "/mnt/e/2025/event_flick_flare/Unet_main/data_simu2/physics_noRandom_method/background_with_light_events_test"
   
   # DataLoader parameters
   batch_size: 1           # 单样本batch (避免显存爆炸)
@@ -78,8 +78,8 @@ lr_scheduler:
 # Training process configuration
 trainer:
   # Checkpointing - FULL VERSION
-  checkpoint_dir: checkpoints/event_voxel_deflare_simple_timeRandom_method
-  resume: checkpoints/event_voxel_deflare_simple_timeRandom_method/checkpoint_epoch_0031_iter_073750.pth              # Path to resume from checkpoint (null = start from scratch)
+  checkpoint_dir: checkpoints/physics_noRandom_method
+  resume: checkpoints/physics_noRandom_method/checkpoint_epoch_0026_iter_066250.pth              # Path to resume from checkpoint (null = start from scratch)
   # resume: checkpoints/event_voxel_deflare_full/checkpoint_epoch_0025_iter_068750.pth
 
   # Training duration

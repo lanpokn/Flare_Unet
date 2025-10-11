@@ -51,7 +51,10 @@
       "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir testdata/efr_test_input --debug --debug_dir debug_output_efr)",
       "Read(//tmp/**)",
       "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 src/tools/event_video_generator.py --input testdata/efr_test_inputefr/composed_00003_bg_flare.h5 --output debug_output_efr/efr_output_video.mp4 --frame_duration_ms 2.5 --fps 30)",
-      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir testdata/efr_test_input --debug)"
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir testdata/efr_test_input --debug)",
+      "WebSearch",
+      "WebFetch(domain:arxiv.org)",
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3:*)"
     ],
     "deny": []
   }

@@ -166,10 +166,10 @@ class BatchEFRProcessor:
         try:
             # Use project's existing H5 loading function
             events_np = load_h5_events(str(h5_file_path))
-            
+
             self.logger.debug(f"Converting {h5_file_path} to {output_txt_path}")
             self.logger.debug(f"Loaded {len(events_np):,} events")
-            
+
             # Time adjustment: ensure positive timestamps starting from 0
             self.min_t_offset = events_np[:, 0].min()
             if self.min_t_offset < 0:
@@ -177,6 +177,17 @@ class BatchEFRProcessor:
                 events_np[:, 0] = events_np[:, 0] - self.min_t_offset
             else:
                 self.min_t_offset = 0
+
+            # ⭐ Auto-calculate time range for EFR processing
+            t_min_us = float(events_np[:, 0].min())  # Convert to Python float
+            t_max_us = float(events_np[:, 0].max())  # Convert to Python float
+            duration_sec = (t_max_us - t_min_us) / 1000000.0  # Convert μs to seconds
+
+            # Update EFR parameters dynamically (ensure Python float, not numpy)
+            self.efr_params['process_ts_start'] = float(0)  # Always start from 0 after adjustment
+            self.efr_params['process_ts_end'] = float(duration_sec + 0.1)  # Add small buffer
+
+            self.logger.debug(f"Auto-configured EFR time range: 0.0 - {self.efr_params['process_ts_end']:.3f}s (duration: {duration_sec:.3f}s)")
             
             # Write EFR format with header: width height, then t x y p
             with open(output_txt_path, 'w') as f:
