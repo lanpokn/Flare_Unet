@@ -124,16 +124,13 @@ class MainDatasetGenerator:
         self.output_base = Path(output_base)
         self.test_mode = test_mode
 
-        # 创建输出目录结构（与DSEC_data一致）
+        # 创建输出目录结构（只保留需要的方法）
         self.input_dir = self.output_base / "input"
         self.target_dir = self.output_base / "target"
         self.inputpfda_dir = self.output_base / "inputpfda"
         self.inputpfdb_dir = self.output_base / "inputpfdb"
-        self.output_dir = self.output_base / "output"  # 标准权重
         self.output_full_dir = self.output_base / "output_full"
         self.output_simple_dir = self.output_base / "output_simple"
-        self.output_simple_timeRandom_dir = self.output_base / "output_simple_timeRandom"
-        self.output_physics_noRandom_dir = self.output_base / "output_physics_noRandom"
         self.outputbaseline_dir = self.output_base / "outputbaseline"
         self.inputefr_dir = self.output_base / "inputefr"
         self.visualize_dir = self.output_base / "visualize"
@@ -141,17 +138,13 @@ class MainDatasetGenerator:
         # UNet checkpoint配置
         checkpoint_base = PROJECT_ROOT / "checkpoints"
         self.unet_checkpoints = {
-            'standard': str(checkpoint_base / 'event_voxel_deflare' / 'checkpoint_epoch_0027_iter_077500.pth'),
-            'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0032_iter_076250.pth'),
-            'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'best_checkpoint.pth'),
-            'simple_timeRandom': str(checkpoint_base / 'event_voxel_deflare_simple_timeRandom_method' / 'best_checkpoint.pth'),
-            'physics_noRandom': str(checkpoint_base / 'physics_noRandom_method' / 'best_checkpoint.pth')
+            'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0031_iter_040000.pth'),
         }
 
         # 创建所有必要的目录
         for dir_path in [self.input_dir, self.target_dir, self.inputpfda_dir, self.inputpfdb_dir,
-                         self.output_dir, self.output_full_dir, self.output_simple_dir,
-                         self.output_simple_timeRandom_dir, self.output_physics_noRandom_dir,
+                         self.output_full_dir, self.output_simple_dir,
                          self.outputbaseline_dir, self.inputefr_dir, self.visualize_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -231,10 +224,11 @@ class MainDatasetGenerator:
         target_copied = 0
         if target_files:
             for input_file in input_files:
-                # 查找匹配的target文件
+                # 查找匹配的target文件（bg_flare → bg_light）
                 matching_target = None
+                expected_target_name = input_file.name.replace('_bg_flare.h5', '_bg_light.h5')
                 for target_file in target_files:
-                    if target_file.name == input_file.name:
+                    if target_file.name == expected_target_name:
                         matching_target = target_file
                         break
 
@@ -313,14 +307,11 @@ class MainDatasetGenerator:
         return success
 
     def run_all_unet_variants(self, input_h5: Path, filename: str) -> dict:
-        """运行所有UNet权重变体"""
+        """运行所有UNet权重变体（只运行simple和full）"""
         outputs = {}
         variants = [
-            ('standard', self.output_dir),
             ('full', self.output_full_dir),
             ('simple', self.output_simple_dir),
-            ('simple_timeRandom', self.output_simple_timeRandom_dir),
-            ('physics_noRandom', self.output_physics_noRandom_dir)
         ]
 
         for variant_name, output_dir in variants:
@@ -336,7 +327,7 @@ class MainDatasetGenerator:
             if success and output_h5.exists():
                 outputs[variant_name] = output_h5
 
-        print(f"    📊 UNet variants completed: {len(outputs)}/5")
+        print(f"    📊 UNet variants completed: {len(outputs)}/2")
         return outputs
 
     def run_baseline_processing(self, input_h5: Path, output_h5: Path):
@@ -366,8 +357,8 @@ class MainDatasetGenerator:
         print("-" * 80)
 
         try:
-            # Step 1: UNet3D (所有5个变体)
-            print(f"  🧠 Running all UNet variants (5 models)...")
+            # Step 1: UNet3D (simple和full)
+            print(f"  🧠 Running UNet variants (simple, full)...")
             unet_outputs = self.run_all_unet_variants(input_h5, filename)
 
             # Step 2: PFD-A
@@ -492,11 +483,8 @@ class MainDatasetGenerator:
         print(f"  • input/               含炫光数据")
         if self.target_source_dir:
             print(f"  • target/              目标去炫光数据")
-        print(f"  • output/              UNet3D standard权重结果")
         print(f"  • output_full/         UNet3D full权重结果")
         print(f"  • output_simple/       UNet3D simple权重结果")
-        print(f"  • output_simple_timeRandom/")
-        print(f"  • output_physics_noRandom/")
         print(f"  • inputpfda/           PFD-A结果")
         print(f"  • inputpfdb/           PFD-B结果")
         print(f"  • inputefr/            EFR结果")
