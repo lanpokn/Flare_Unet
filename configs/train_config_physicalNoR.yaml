@@ -79,7 +79,7 @@ lr_scheduler:
 trainer:
   # Checkpointing - FULL VERSION
   checkpoint_dir: checkpoints/physics_noRandom_method
-  resume: checkpoints/physics_noRandom_method/checkpoint_epoch_0026_iter_066250.pth              # Path to resume from checkpoint (null = start from scratch)
+  resume: checkpoints/physics_noRandom_method/checkpoint_epoch_0026_iter_067500.pth              # Path to resume from checkpoint (null = start from scratch)
   # resume: checkpoints/event_voxel_deflare_full/checkpoint_epoch_0025_iter_068750.pth
 
   # Training duration

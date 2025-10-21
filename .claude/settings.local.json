@@ -54,7 +54,8 @@
       "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir testdata/efr_test_input --debug)",
       "WebSearch",
       "WebFetch(domain:arxiv.org)",
-      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3:*)"
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3:*)",
+      "Bash(md5sum:*)"
     ],
     "deny": []
   }

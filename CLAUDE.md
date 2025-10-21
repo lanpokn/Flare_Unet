@@ -1384,34 +1384,38 @@ DSEC_data/
         └── baseline_output.mp4 (3.8MB) ✅
 ```
 
-### **实测性能**
+### **实测性能** - **2025-10-11更新**
 
 **测试文件**: `zurich_city_03_a.h5` (1.7GB原始文件)
 
 | 处理步骤 | 输入事件 | 输出事件 | 压缩率 | 处理时间 | 状态 |
 |---------|---------|---------|--------|----------|------|
-| **提取100ms** | N/A | 1,743,902 | N/A | <1秒 | ✅ |
-| **UNet3D** | 1,743,902 | 735,392 | 42% | ~15秒 | ✅ |
-| **PFD** | 1,743,902 | 988,921 | 57% | ~50秒 | ✅ |
-| **EFR** | 1,850,936 | 505,515 | 27% | ~53秒 | ✅ |
-| **Baseline** | 1,743,902 | 877,850 | 50% | ~5秒 | ✅ |
-| **可视化** | N/A | 4个MP4 | N/A | ~20秒 | ✅ |
-| **总耗时** | N/A | N/A | N/A | ~2分钟 | ✅ |
+| **提取100ms** | N/A | ~1.8M | N/A | <1秒 | ✅ |
+| **UNet3D×5** | 1.8M | 各不同 | 27-42% | ~75秒 | ✅ |
+| **PFD** | 1.8M | ~990K | 57% | ~50秒 | ✅ |
+| **EFR** | 1.8M | ~506K | 27% | ~53秒 | ✅ |
+| **Baseline** | 1.8M | ~878K | 50% | ~5秒 | ✅ |
+| **可视化** | N/A | 9个MP4 | N/A | ~45秒 | ✅ |
+| **总耗时/段** | N/A | N/A | N/A | ~4分钟 | ✅ |
 
-### **已知问题与待办**
+### **多UNet权重配置** - **2025-10-11新增**
 
-✅ **EFR输出为空问题** - **已解决 (2025-10-11)**:
-- **根本原因**: 时间戳调整逻辑bug，数据时间范围与EFR处理窗口不匹配
-- **修复方案**: 改进时间戳调整条件判断
-- **验证结果**: 正常压缩率27.3%，与PFD/UNet3D效果相当
+| 权重名称 | Checkpoint路径 | 训练方法 | 输出目录 |
+|---------|---------------|---------|---------|
+| **standard** | `checkpoint_epoch_0027_iter_077500.pth` | 标准训练 | `output/` |
+| **full** | `event_voxel_deflare_full/best_checkpoint.pth` | Full参数 | `output_full/` |
+| **simple** | `event_voxel_deflare_simple/best_checkpoint.pth` | Simple训练 | `output_simple/` |
+| **simple_timeRandom** | `simple_timeRandom_method/best_checkpoint.pth` | Time随机 | `output_simple_timeRandom/` |
+| **physics_noRandom** | `physics_noRandom_method/best_checkpoint.pth` | 物理无随机 | `output_physics_noRandom/` |
 
-### **技术亮点总结**
+### **技术亮点总结** - **2025-10-11更新**
 
 1. ✅ **内存安全**: 先读时间戳→找索引范围→只读取需要的部分
-2. ✅ **代码复用**: 直接调用BatchPFDProcessor/BatchEFRProcessor类
-3. ✅ **Baseline优化**: 避免subprocess，直接encode/decode
-4. ✅ **统一可视化**: 所有方法结果自动生成在同一文件夹
-5. ✅ **DSEC兼容**: 完全符合现有DSEC_data命名和目录结构
+2. ✅ **顺序采样**: 400ms间隔时间采样，避免重复I/O
+3. ✅ **断点续存**: 解析文件名自动跳过已处理段
+4. ✅ **多权重并行**: 5个UNet权重自动处理，便于对比
+5. ✅ **代码复用**: 直接调用BatchPFDProcessor/BatchEFRProcessor类
+6. ✅ **统一可视化**: 所有方法结果（9个视频）自动生成在同一文件夹
 
 ### **依赖要求**
 
@@ -1425,3 +1429,33 @@ pip install hdf5plugin  # H5文件gzip压缩支持
 - torch (UNet3D)
 - opencv (EFR)
 ```
+
+---
+
+## 主实验数据集生成器 - **2025-10-21新增** ⭐**论文主实验工具**
+
+**位置**: `src/tools/generate_main_dataset.py`
+
+**功能**: 统一处理仿真和真实数据集（100ms固定长度H5文件），用9种方法生成论文主实验数据集
+
+**9种方法**:
+- 5个UNet权重（standard/full/simple/simple_timeRandom/physics_noRandom）
+- PFD-A（去噪）+ PFD-B（去频闪）
+- EFR（线性滤波）+ Baseline（编解码）
+
+**输出**: `{output_base}/` 包含input/target/9种方法结果/可视化视频
+
+**使用**:
+```bash
+# 仿真数据集（默认background_with_flare_events_test）
+python3 src/tools/generate_main_dataset.py --test --num_samples 3
+python3 src/tools/generate_main_dataset.py  # 全部50个文件（~4小时）
+
+# 真实数据集（DSEC/EVK4等）
+python3 src/tools/generate_main_dataset.py \
+  --input_dir EVK4/input \
+  --target_dir EVK4/target \
+  --output_base EVK4_results
+```
+
+**关键设计**: 仿真/真实数据复用同一pipeline，只需切换输入目录即可

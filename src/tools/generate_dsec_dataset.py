@@ -67,13 +67,29 @@ class DSECDatasetGenerator:
         # 创建输出目录结构
         self.input_dir = self.output_base / "input"
         self.inputpfds_dir = self.output_base / "inputpfds"
-        self.output_dir = self.output_base / "output"
+        self.output_dir = self.output_base / "output"  # 标准权重
+        self.output_full_dir = self.output_base / "output_full"
+        self.output_simple_dir = self.output_base / "output_simple"
+        self.output_simple_timeRandom_dir = self.output_base / "output_simple_timeRandom"
+        self.output_physics_noRandom_dir = self.output_base / "output_physics_noRandom"
         self.outputbaseline_dir = self.output_base / "outputbaseline"
-        self.inputefr_dir = self.output_base / "inputefr"  # 新增EFR
+        self.inputefr_dir = self.output_base / "inputefr"
         self.visualize_dir = self.output_base / "visualize"
+
+        # UNet checkpoint配置（使用绝对路径避免WSL I/O问题）
+        checkpoint_base = PROJECT_ROOT / "checkpoints"
+        self.unet_checkpoints = {
+            'standard': str(checkpoint_base / 'event_voxel_deflare' / 'checkpoint_epoch_0027_iter_077500.pth'),
+            'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0032_iter_076250.pth'),  # 最新训练权重
+            'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'best_checkpoint.pth'),
+            'simple_timeRandom': str(checkpoint_base / 'event_voxel_deflare_simple_timeRandom_method' / 'best_checkpoint.pth'),
+            'physics_noRandom': str(checkpoint_base / 'physics_noRandom_method' / 'best_checkpoint.pth')
+        }
 
         # 创建所有必要的目录
         for dir_path in [self.input_dir, self.inputpfds_dir, self.output_dir,
+                         self.output_full_dir, self.output_simple_dir,
+                         self.output_simple_timeRandom_dir, self.output_physics_noRandom_dir,
                          self.outputbaseline_dir, self.inputefr_dir, self.visualize_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -184,30 +200,33 @@ class DSECDatasetGenerator:
         """
         内存安全地提取100ms事件段
 
-        核心策略：先读时间戳数组，找到索引范围，再只读取该范围的所有数据
+        核心策略：分块二分查找边界索引，避免加载整个时间戳数组
         """
         segment_duration_us = 100000  # 100ms
         end_time_us = start_time_us + segment_duration_us
 
         with h5py.File(file_path, 'r') as f:
             events_group = f['events']
+            t_dataset = events_group['t']
+            total_events = len(t_dataset)
 
-            # Step 1: 只读取时间戳数组来确定索引范围
-            t_all = events_group['t'][:]
+            # Step 1: 分块二分查找起始索引 (避免加载全部数据)
+            chunk_size = 100000  # 每次读取10万个时间戳
+            idx_start = self._binary_search_time_index(
+                t_dataset, start_time_us, 0, total_events, chunk_size, find_start=True
+            )
 
-            # Step 2: 使用布尔索引找到100ms范围内的事件索引
-            mask = (t_all >= start_time_us) & (t_all < end_time_us)
-            indices = np.where(mask)[0]
+            # Step 2: 从起始索引附近查找结束索引
+            idx_end = self._binary_search_time_index(
+                t_dataset, end_time_us, idx_start, total_events, chunk_size, find_start=False
+            )
 
-            if len(indices) == 0:
+            if idx_start >= idx_end:
                 print(f"  ⚠️  No events in selected time window")
                 return np.empty((0, 4))
 
-            # Step 3: 只读取这个范围的数据（内存安全）
-            idx_start = indices[0]
-            idx_end = indices[-1] + 1
-
-            t = events_group['t'][idx_start:idx_end]
+            # Step 3: 只读取找到的范围（内存安全）
+            t = t_dataset[idx_start:idx_end]
             x = events_group['x'][idx_start:idx_end]
             y = events_group['y'][idx_start:idx_end]
             p = events_group['p'][idx_start:idx_end]
@@ -220,6 +239,53 @@ class DSECDatasetGenerator:
 
         print(f"  ✅ Extracted {len(events_segment):,} events from segment")
         return events_segment
+
+    def _binary_search_time_index(self, t_dataset, target_time: int,
+                                   left: int, right: int, chunk_size: int,
+                                   find_start: bool = True) -> int:
+        """
+        分块二分查找时间索引（内存友好）
+
+        Args:
+            t_dataset: H5 dataset对象（不加载到内存）
+            target_time: 目标时间戳（微秒）
+            left, right: 搜索范围
+            chunk_size: 每次读取的事件数量
+            find_start: True=查找>=target的第一个索引, False=查找<target的最后一个索引+1
+
+        Returns:
+            索引位置
+        """
+        while left < right:
+            mid = (left + right) // 2
+
+            # 分块读取：只读取mid附近的chunk
+            chunk_start = max(0, mid - chunk_size // 2)
+            chunk_end = min(len(t_dataset), chunk_start + chunk_size)
+            t_chunk = t_dataset[chunk_start:chunk_end]
+
+            # 在chunk内找到mid对应的时间戳
+            mid_offset = mid - chunk_start
+            if mid_offset < 0 or mid_offset >= len(t_chunk):
+                # 边界情况：直接读取mid位置
+                t_mid = t_dataset[mid]
+            else:
+                t_mid = t_chunk[mid_offset]
+
+            if find_start:
+                # 查找第一个 >= target_time 的位置
+                if t_mid < target_time:
+                    left = mid + 1
+                else:
+                    right = mid
+            else:
+                # 查找第一个 >= target_time 的位置（作为end）
+                if t_mid < target_time:
+                    left = mid + 1
+                else:
+                    right = mid
+
+        return left
 
     def save_h5_events(self, events: np.ndarray, output_path: Path):
         """保存事件到H5文件（标准DSEC格式）"""
@@ -247,22 +313,101 @@ class DSECDatasetGenerator:
         filename = f"real_flare_{source_name}_t{time_ms}ms_{datetime_str}.h5"
         return filename
 
-    def run_unet_inference(self, input_h5: Path, output_h5: Path):
-        """运行UNet3D推理"""
+    def run_unet_inference(self, input_h5: Path, output_h5: Path, checkpoint_path: str, variant_name: str = "standard"):
+        """
+        运行UNet3D推理
+
+        Args:
+            input_h5: 输入H5文件
+            output_h5: 输出H5文件
+            checkpoint_path: checkpoint文件路径
+            variant_name: 权重变体名称（用于日志）
+        """
+        # 临时修改inference_config.yaml中的checkpoint路径
+        import yaml
+        config_path = PROJECT_ROOT / "configs" / "inference_config.yaml"
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        original_path = config['model']['path']
+        config['model']['path'] = checkpoint_path
+
+        # 写入临时配置
+        temp_config_path = PROJECT_ROOT / f"configs/temp_inference_{variant_name}.yaml"
+        with open(temp_config_path, 'w') as f:
+            yaml.dump(config, f)
+
         cmd = [
             sys.executable, "main.py", "inference",
-            "--config", "configs/inference_config.yaml",
+            "--config", str(temp_config_path),
             "--input", str(input_h5),
             "--output", str(output_h5)
         ]
 
-        print(f"  🔧 Running UNet3D inference...")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        print(f"    🔧 Running UNet3D ({variant_name})...")
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=300)
 
-        if result.returncode == 0:
-            print(f"  ✅ UNet3D inference completed")
-        else:
-            print(f"  ❌ UNet3D inference failed: {result.stderr}")
+            if result.returncode == 0:
+                print(f"    ✅ UNet3D ({variant_name}) completed")
+                success = True
+            else:
+                print(f"    ❌ UNet3D ({variant_name}) failed")
+                if result.stderr:
+                    # 只打印关键错误信息
+                    error_lines = result.stderr.strip().split('\n')
+                    for line in error_lines[-5:]:  # 只打印最后5行
+                        if 'ERROR' in line or 'Error' in line:
+                            print(f"       {line}")
+                success = False
+        except subprocess.TimeoutExpired:
+            print(f"    ❌ UNet3D ({variant_name}) timeout (>5min)")
+            success = False
+        except Exception as e:
+            print(f"    ❌ UNet3D ({variant_name}) exception: {e}")
+            success = False
+        finally:
+            # 清理临时配置
+            if temp_config_path.exists():
+                temp_config_path.unlink()
+
+        return success
+
+    def run_all_unet_variants(self, input_h5: Path, filename: str) -> dict:
+        """
+        运行所有UNet权重变体（顺序执行，带错误处理）
+
+        Returns:
+            {variant_name: output_h5_path} (只包含成功的)
+        """
+        outputs = {}
+        variants = [
+            ('standard', self.output_dir),
+            ('full', self.output_full_dir),
+            ('simple', self.output_simple_dir),
+            ('simple_timeRandom', self.output_simple_timeRandom_dir),
+            ('physics_noRandom', self.output_physics_noRandom_dir)
+        ]
+
+        for variant_name, output_dir in variants:
+            output_h5 = output_dir / filename
+            checkpoint_path = self.unet_checkpoints[variant_name]
+
+            # 验证checkpoint存在
+            if not Path(checkpoint_path).exists():
+                print(f"    ⚠️  UNet3D ({variant_name}) skipped - checkpoint not found")
+                continue
+
+            # 运行推理
+            success = self.run_unet_inference(input_h5, output_h5, checkpoint_path, variant_name)
+
+            # 只记录成功的输出
+            if success and output_h5.exists():
+                outputs[variant_name] = output_h5
+
+        print(f"    📊 UNet variants completed: {len(outputs)}/5")
+        return outputs
 
     def run_pfd_processing(self, input_h5: Path, output_h5: Path):
         """运行PFD处理（直接调用）"""
@@ -324,34 +469,44 @@ class DSECDatasetGenerator:
 
     def generate_visualizations(self, base_filename: str,
                                input_h5: Path,
-                               unet_h5: Path,
+                               unet_outputs: dict,
                                pfd_h5: Path,
                                efr_h5: Path,
                                baseline_h5: Path):
-        """生成所有方法的可视化（同一输入的所有结果放在同一子文件夹）"""
+        """
+        生成所有方法的可视化（同一输入的所有结果放在同一子文件夹）
+
+        Args:
+            unet_outputs: {variant_name: h5_path} 字典
+        """
         # 创建子文件夹（使用文件基础名）
         vis_subdir = self.visualize_dir / Path(base_filename).stem
         vis_subdir.mkdir(parents=True, exist_ok=True)
 
-        print(f"  🎬 Generating visualizations to: {vis_subdir.name}/")
+        print(f"    🎬 Generating visualizations to: {vis_subdir.name}/")
 
         # 定义所有需要可视化的文件
-        vis_tasks = [
-            (input_h5, "input"),
-            (unet_h5, "unet_output"),
+        vis_tasks = [(input_h5, "input")]
+
+        # 添加所有UNet变体
+        for variant, h5_path in unet_outputs.items():
+            vis_tasks.append((h5_path, f"unet_{variant}"))
+
+        # 添加其他方法
+        vis_tasks.extend([
             (pfd_h5, "pfd_output"),
             (efr_h5, "efr_output"),
             (baseline_h5, "baseline_output")
-        ]
+        ])
 
         for h5_file, method_name in vis_tasks:
             if h5_file.exists():
                 try:
                     output_video = vis_subdir / f"{method_name}.mp4"
                     self.video_generator.process_h5_file(str(h5_file), str(output_video))
-                    print(f"    ✅ {method_name}.mp4 generated")
+                    print(f"      ✅ {method_name}.mp4")
                 except Exception as e:
-                    print(f"    ❌ {method_name} visualization failed: {e}")
+                    print(f"      ❌ {method_name} failed: {e}")
 
     def process_single_segment(self, source_file: Path, start_time: int) -> bool:
         """
@@ -383,15 +538,15 @@ class DSECDatasetGenerator:
         # Step 3: 运行所有处理方法
         print(f"    🔄 Processing with all methods...")
 
-        # UNet3D
-        unet_h5 = self.output_dir / filename
-        self.run_unet_inference(input_h5, unet_h5)
+        # UNet3D (所有5个变体)
+        print(f"    🧠 Running all UNet variants (5 models)...")
+        unet_outputs = self.run_all_unet_variants(input_h5, filename)
 
         # PFD
         pfd_h5 = self.inputpfds_dir / filename
         self.run_pfd_processing(input_h5, pfd_h5)
 
-        # EFR (新增)
+        # EFR
         efr_h5 = self.inputefr_dir / filename
         self.run_efr_processing(input_h5, efr_h5)
 
@@ -402,7 +557,7 @@ class DSECDatasetGenerator:
         # Step 4: 生成可视化
         print(f"    📊 Generating visualizations...")
         self.generate_visualizations(
-            filename, input_h5, unet_h5, pfd_h5, efr_h5, baseline_h5
+            filename, input_h5, unet_outputs, pfd_h5, efr_h5, baseline_h5
         )
 
         print(f"    ✅ Segment completed: {filename}")
