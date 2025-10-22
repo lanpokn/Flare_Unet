@@ -10,7 +10,7 @@
 功能：
 1. 读取输入目录（仿真或真实数据）和对应的target目录
 2. 运行所有处理方法：
-   - 5个UNet权重变体 (standard, full, simple, simple_timeRandom, physics_noRandom)
+   - 4个UNet权重变体 (full, simple, full_old, simple_old)
    - PFD-A (score_select=1)
    - PFD-B (score_select=0)
    - EFR (线性梳状滤波器)
@@ -19,14 +19,14 @@
 4. 输出目录结构统一，便于后续分析
 
 输出目录结构:
-{output_base}/
+{output_base}/  # 仿真: MainSimu_data / 真实: MainReal_data
 ├── input/              # 原始含炫光数据
 ├── target/             # 目标去炫光数据 (可选)
-├── output/             # UNet3D standard权重
-├── output_full/        # UNet3D full权重
-├── output_simple/      # UNet3D simple权重
-├── output_simple_timeRandom/
-├── output_physics_noRandom/
+├── output_{variant}/   # UNet3D各个权重变体结果
+│   # 仿真模式(4个): full, simple, full_old, simple_old
+│   # 真实模式(9个): full, simple, nolight, physics, physics_noRandom_method,
+│   #               physics_noRandom_noTen_method, simple_timeRandom_method,
+│   #               full_old, simple_old
 ├── inputpfda/          # PFD-A结果
 ├── inputpfdb/          # PFD-B结果
 ├── inputefr/           # EFR结果
@@ -35,33 +35,26 @@
     └── {filename}/
         ├── input.mp4
         ├── target.mp4 (如果有target)
-        ├── unet_standard.mp4
-        ├── unet_full.mp4
-        ├── unet_simple.mp4
-        ├── unet_simple_timeRandom.mp4
-        ├── unet_physics_noRandom.mp4
+        ├── unet_{variant}.mp4 (所有UNet变体)
         ├── pfda_output.mp4
         ├── pfdb_output.mp4
         ├── efr_output.mp4
         └── baseline_output.mp4
 
 Usage:
-    # 仿真数据集（默认）
+    # 仿真数据集（默认，使用4个标准checkpoint）
     python src/tools/generate_main_dataset.py
 
-    # 真实数据集（DSEC）
-    python src/tools/generate_main_dataset.py \
-      --input_dir DSEC_data/input \
-      --output_base DSEC_results
+    # 真实数据集（EVK4，扫描所有40000权重 + old权重）
+    python src/tools/generate_main_dataset.py --real \
+      --input_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/input \
+      --target_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/target
 
-    # 真实数据集（EVK4）
-    python src/tools/generate_main_dataset.py \
-      --input_dir EVK4/input \
-      --target_dir EVK4/target \
-      --output_base EVK4_results
-
-    # 测试模式：只处理前3个文件
-    python src/tools/generate_main_dataset.py --test --num_samples 3
+    # 测试模式：只处理前1个文件
+    python src/tools/generate_main_dataset.py --real \
+      --input_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/input \
+      --target_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/target \
+      --test --num_samples 1
 """
 
 import os
@@ -95,14 +88,17 @@ class MainDatasetGenerator:
                  input_dir: str = None,
                  target_dir: str = None,
                  output_base: str = "Main_data",
-                 test_mode: bool = False):
+                 test_mode: bool = False,
+                 real_mode: bool = False):
         """
         Args:
             input_dir: 输入目录 (含炫光，默认data_simu/physics_method/background_with_flare_events_test)
             target_dir: 目标目录 (去炫光，可选，默认data_simu/physics_method/background_with_light_events_test)
             output_base: 输出基础目录 (默认Main_data，仿真用MainSimu_data，真实用MainReal_data)
             test_mode: 测试模式（跳过某些耗时操作）
+            real_mode: 真实数据模式（扫描checkpoints/所有40000权重，old保持不变）
         """
+        self.real_mode = real_mode
         # 默认使用仿真数据集路径
         if input_dir is None:
             self.input_source_dir = PROJECT_ROOT / "data_simu/physics_method/background_with_flare_events_test"
@@ -124,27 +120,49 @@ class MainDatasetGenerator:
         self.output_base = Path(output_base)
         self.test_mode = test_mode
 
-        # 创建输出目录结构（只保留需要的方法）
+        # 创建输出目录结构（基础目录）
         self.input_dir = self.output_base / "input"
         self.target_dir = self.output_base / "target"
         self.inputpfda_dir = self.output_base / "inputpfda"
         self.inputpfdb_dir = self.output_base / "inputpfdb"
-        self.output_full_dir = self.output_base / "output_full"
-        self.output_simple_dir = self.output_base / "output_simple"
         self.outputbaseline_dir = self.output_base / "outputbaseline"
         self.inputefr_dir = self.output_base / "inputefr"
         self.visualize_dir = self.output_base / "visualize"
 
         # UNet checkpoint配置
         checkpoint_base = PROJECT_ROOT / "checkpoints"
-        self.unet_checkpoints = {
-            'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0031_iter_040000.pth'),
-            'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0031_iter_040000.pth'),
+        checkpoint_old_base = PROJECT_ROOT / "checkpoints_old"
+
+        # checkpoints_old的两个固定权重（仿真和真实都使用）
+        checkpoints_old_fixed = {
+            'full_old': str(checkpoint_old_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0032_iter_076250.pth'),
+            'simple_old': str(checkpoint_old_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0027_iter_076250.pth'),
         }
 
-        # 创建所有必要的目录
+        if real_mode:
+            # 真实数据模式：扫描checkpoints/所有40000权重 + 固定的old权重
+            checkpoints_new = self._discover_checkpoints_40000(checkpoint_base)
+            self.unet_checkpoints = {**checkpoints_new, **checkpoints_old_fixed}
+            print(f"🔍 真实数据模式：发现 {len(checkpoints_new)} 个新checkpoint + 2个old checkpoint = {len(self.unet_checkpoints)} 个变体")
+            for name in sorted(self.unet_checkpoints.keys()):
+                print(f"  • {name}")
+        else:
+            # 仿真数据模式：仅使用simple和full + 固定的old权重
+            self.unet_checkpoints = {
+                'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0031_iter_040000.pth'),
+                'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0031_iter_040000.pth'),
+                **checkpoints_old_fixed
+            }
+
+        # 为每个UNet变体创建输出目录
+        self.unet_output_dirs = {}
+        for variant_name in self.unet_checkpoints.keys():
+            output_dir = self.output_base / f"output_{variant_name}"
+            self.unet_output_dirs[variant_name] = output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 创建基础目录
         for dir_path in [self.input_dir, self.target_dir, self.inputpfda_dir, self.inputpfdb_dir,
-                         self.output_full_dir, self.output_simple_dir,
                          self.outputbaseline_dir, self.inputefr_dir, self.visualize_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -173,6 +191,39 @@ class MainDatasetGenerator:
         print(f"📂 输出基础目录: {self.output_base}")
         if test_mode:
             print(f"🧪 测试模式: 已启用")
+
+    def _discover_checkpoints_40000(self, checkpoint_base: Path) -> dict:
+        """
+        扫描checkpoints/目录下所有40000权重
+
+        Args:
+            checkpoint_base: checkpoints基础目录
+
+        Returns:
+            {variant_name: checkpoint_path} 字典
+        """
+        checkpoints = {}
+
+        # 扫描所有子目录
+        for subdir in checkpoint_base.iterdir():
+            if not subdir.is_dir():
+                continue
+
+            # 查找40000权重文件
+            checkpoint_file = subdir / "checkpoint_epoch_0031_iter_040000.pth"
+            if not checkpoint_file.exists():
+                continue
+
+            # 提取有效的变体名字（去掉event_voxel_deflare_前缀）
+            dir_name = subdir.name
+            if dir_name.startswith("event_voxel_deflare_"):
+                variant_name = dir_name.replace("event_voxel_deflare_", "")
+            else:
+                variant_name = dir_name
+
+            checkpoints[variant_name] = str(checkpoint_file)
+
+        return checkpoints
 
     def copy_input_target_files(self, num_samples: int = None) -> List[Path]:
         """
@@ -286,13 +337,15 @@ class MainDatasetGenerator:
 
         print(f"    🔧 Running UNet3D ({variant_name})...")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=600)
 
             if result.returncode == 0:
                 print(f"    ✅ UNet3D ({variant_name}) completed")
                 success = True
             else:
-                print(f"    ❌ UNet3D ({variant_name}) failed")
+                print(f"    ❌ UNet3D ({variant_name}) failed (returncode: {result.returncode})")
+                if result.stderr:
+                    print(f"    📋 Error output: {result.stderr[:500]}")  # 显示前500字符
                 success = False
         except subprocess.TimeoutExpired:
             print(f"    ❌ UNet3D ({variant_name}) timeout")
@@ -307,19 +360,22 @@ class MainDatasetGenerator:
         return success
 
     def run_all_unet_variants(self, input_h5: Path, filename: str) -> dict:
-        """运行所有UNet权重变体（只运行simple和full）"""
+        """运行所有UNet权重变体（动态支持仿真/真实数据模式）"""
         outputs = {}
-        variants = [
-            ('full', self.output_full_dir),
-            ('simple', self.output_simple_dir),
-        ]
+        total_variants = len(self.unet_checkpoints)
 
-        for variant_name, output_dir in variants:
+        for variant_name, checkpoint_path in self.unet_checkpoints.items():
+            output_dir = self.unet_output_dirs[variant_name]
             output_h5 = output_dir / filename
-            checkpoint_path = self.unet_checkpoints[variant_name]
 
             if not Path(checkpoint_path).exists():
                 print(f"    ⚠️  UNet3D ({variant_name}) skipped - checkpoint not found")
+                continue
+
+            # 断点续存：检查输出文件是否已存在
+            if output_h5.exists():
+                print(f"    ⏭️  UNet3D ({variant_name}) skipped - output exists")
+                outputs[variant_name] = output_h5
                 continue
 
             success = self.run_unet_inference(input_h5, output_h5, checkpoint_path, variant_name)
@@ -327,11 +383,16 @@ class MainDatasetGenerator:
             if success and output_h5.exists():
                 outputs[variant_name] = output_h5
 
-        print(f"    📊 UNet variants completed: {len(outputs)}/2")
+        print(f"    📊 UNet variants completed: {len(outputs)}/{total_variants}")
         return outputs
 
     def run_baseline_processing(self, input_h5: Path, output_h5: Path):
         """运行Baseline（编解码only）处理"""
+        # 断点续存：检查输出文件是否已存在
+        if output_h5.exists():
+            print(f"  ⏭️  Baseline skipped - output exists")
+            return
+
         print(f"  🔧 Running Baseline processing...")
         try:
             events_np = load_h5_events(str(input_h5))
@@ -357,24 +418,34 @@ class MainDatasetGenerator:
         print("-" * 80)
 
         try:
-            # Step 1: UNet3D (simple和full)
-            print(f"  🧠 Running UNet variants (simple, full)...")
+            # Step 1: UNet3D (所有变体)
+            variant_count = len(self.unet_checkpoints)
+            print(f"  🧠 Running UNet variants ({variant_count} variants)...")
             unet_outputs = self.run_all_unet_variants(input_h5, filename)
 
             # Step 2: PFD-A
-            print(f"  🔧 Running PFD-A processing...")
             pfda_h5 = self.inputpfda_dir / filename
-            self.pfd_processor_a.process_single_file(input_h5, pfda_h5, file_idx=0)
+            if pfda_h5.exists():
+                print(f"  ⏭️  PFD-A skipped - output exists")
+            else:
+                print(f"  🔧 Running PFD-A processing...")
+                self.pfd_processor_a.process_single_file(input_h5, pfda_h5, file_idx=0)
 
             # Step 3: PFD-B
-            print(f"  🔧 Running PFD-B processing...")
             pfdb_h5 = self.inputpfdb_dir / filename
-            self.pfd_processor_b.process_single_file(input_h5, pfdb_h5, file_idx=0)
+            if pfdb_h5.exists():
+                print(f"  ⏭️  PFD-B skipped - output exists")
+            else:
+                print(f"  🔧 Running PFD-B processing...")
+                self.pfd_processor_b.process_single_file(input_h5, pfdb_h5, file_idx=0)
 
             # Step 4: EFR
-            print(f"  🔧 Running EFR processing...")
             efr_h5 = self.inputefr_dir / filename
-            self.efr_processor.process_single_file(input_h5, efr_h5, file_idx=0)
+            if efr_h5.exists():
+                print(f"  ⏭️  EFR skipped - output exists")
+            else:
+                print(f"  🔧 Running EFR processing...")
+                self.efr_processor.process_single_file(input_h5, efr_h5, file_idx=0)
 
             # Step 5: Baseline
             baseline_h5 = self.outputbaseline_dir / filename
@@ -405,7 +476,7 @@ class MainDatasetGenerator:
                                pfdb_h5: Path,
                                efr_h5: Path,
                                baseline_h5: Path):
-        """生成所有方法的可视化"""
+        """生成所有方法的可视化（支持断点续存）"""
         vis_subdir = self.visualize_dir / Path(base_filename).stem
         vis_subdir.mkdir(parents=True, exist_ok=True)
 
@@ -416,9 +487,13 @@ class MainDatasetGenerator:
             (input_h5, "input"),
         ]
 
-        # Target可选
-        if target_h5.exists():
-            vis_tasks.append((target_h5, "target"))
+        # Target可视化（修复：使用正确的target文件名）
+        if self.target_source_dir:
+            # 从input文件名推导target文件名
+            target_filename = base_filename.replace('_bg_flare.h5', '_bg_light.h5')
+            target_h5_actual = self.target_dir / target_filename
+            if target_h5_actual.exists():
+                vis_tasks.append((target_h5_actual, "target"))
 
         # 添加所有UNet变体
         for variant, h5_path in unet_outputs.items():
@@ -434,8 +509,14 @@ class MainDatasetGenerator:
 
         for h5_file, method_name in vis_tasks:
             if h5_file.exists():
+                output_video = vis_subdir / f"{method_name}.mp4"
+
+                # 断点续存：检查视频文件是否已存在
+                if output_video.exists():
+                    print(f"      ⏭️  {method_name}.mp4 (exists)")
+                    continue
+
                 try:
-                    output_video = vis_subdir / f"{method_name}.mp4"
                     self.video_generator.process_h5_file(str(h5_file), str(output_video))
                     print(f"      ✅ {method_name}.mp4")
                 except Exception as e:
@@ -483,8 +564,10 @@ class MainDatasetGenerator:
         print(f"  • input/               含炫光数据")
         if self.target_source_dir:
             print(f"  • target/              目标去炫光数据")
-        print(f"  • output_full/         UNet3D full权重结果")
-        print(f"  • output_simple/       UNet3D simple权重结果")
+        print(f"  • output_full/         UNet3D full权重结果（新版）")
+        print(f"  • output_simple/       UNet3D simple权重结果（新版）")
+        print(f"  • output_full_old/     UNet3D full权重结果（旧版）")
+        print(f"  • output_simple_old/   UNet3D simple权重结果（旧版）")
         print(f"  • inputpfda/           PFD-A结果")
         print(f"  • inputpfdb/           PFD-B结果")
         print(f"  • inputefr/            EFR结果")
@@ -498,17 +581,24 @@ def main():
     )
     parser.add_argument("--input_dir", help="输入目录 (默认: data_simu/physics_method/background_with_flare_events_test)")
     parser.add_argument("--target_dir", help="目标目录 (可选，默认仿真数据使用background_with_light_events_test)")
-    parser.add_argument("--output_base", default="Main_data", help="输出基础目录 (默认Main_data，仿真自动改为MainSimu_data)")
+    parser.add_argument("--output_base", default="Main_data", help="输出基础目录 (默认Main_data，仿真自动改为MainSimu_data，真实自动改为MainReal_data)")
     parser.add_argument("--test", action="store_true", help="测试模式")
+    parser.add_argument("--real", action="store_true", help="真实数据模式（扫描checkpoints/所有40000权重）")
     parser.add_argument("--num_samples", type=int, help="限制处理的文件数量（测试用）")
 
     args = parser.parse_args()
 
+    # 真实数据模式自动设置输出目录
+    output_base = args.output_base
+    if args.real and output_base == "Main_data":
+        output_base = "MainReal_data"
+
     generator = MainDatasetGenerator(
         input_dir=args.input_dir,
         target_dir=args.target_dir,
-        output_base=args.output_base,
-        test_mode=args.test
+        output_base=output_base,
+        test_mode=args.test,
+        real_mode=args.real
     )
 
     # 生成完整数据集

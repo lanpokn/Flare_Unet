@@ -55,7 +55,10 @@
       "WebSearch",
       "WebFetch(domain:arxiv.org)",
       "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3:*)",
-      "Bash(md5sum:*)"
+      "Bash(md5sum:*)",
+      "Bash(for dir in MainReal_data/output_*/)",
+      "Bash(done)",
+      "Bash(for dir in output_*/)"
     ],
     "deny": []
   }

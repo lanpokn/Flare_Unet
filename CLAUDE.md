@@ -1272,25 +1272,163 @@ def __init__(self, debug: bool = False, debug_dir: str = 'debug_output/efr'):
 
 ---
 
-## DSEC数据集生成工具 - **2025-10-11全面完成** ⭐**新增功能**
+## 主实验数据集生成工具 - **2025-10-22最新版** ⭐**论文核心工具**
 
 ### **核心功能**
 
-**✅ 完整的数据生成与处理Pipeline**:
-- **内存安全提取**: 从长炫光文件（1-5GB）中随机提取100ms段，避免内存溢出
-- **多方法处理**: 自动运行UNet3D、PFD、EFR、Baseline四种方法
-- **统一可视化**: 同一输入的所有方法结果自动生成MP4视频到同一子文件夹
-- **DSEC标准命名**: 复用现有的`real_flare_{source}_t{time}ms_{datetime}.h5`格式
+**位置**: `src/tools/generate_main_dataset.py`
 
-### **技术架构**
+**✅ 统一处理仿真和真实数据集 + 真实数据专用模式**:
+- **数据源**: 固定100ms H5文件（仿真或真实数据）
+- **仿真模式**: 4个标准UNet权重 + PFD-A + PFD-B + EFR + Baseline (共8种方法)
+- **真实模式** (`--real`): **自动扫描所有40000权重** + 固定old权重 + PFD/EFR/Baseline (共**13种方法**)
+- **统一可视化**: 所有方法结果自动生成MP4视频
+- **断点续存**: 自动跳过已处理文件
+
+### **UNet权重配置** - **2025-10-22重大更新**
+
+**仿真模式（默认）**:
+```python
+# 4个标准checkpoint
+unet_checkpoints = {
+    'simple': 'checkpoints/event_voxel_deflare_simple/checkpoint_epoch_0031_iter_040000.pth',
+    'full': 'checkpoints/event_voxel_deflare_full/checkpoint_epoch_0031_iter_040000.pth',
+    'full_old': 'checkpoints_old/event_voxel_deflare_full/checkpoint_epoch_0032_iter_076250.pth',
+    'simple_old': 'checkpoints_old/event_voxel_deflare_simple/checkpoint_epoch_0027_iter_076250.pth',
+}
+```
+
+**真实模式** (`--real`):
+```python
+# 自动扫描checkpoints/所有40000权重 + 固定old权重
+# 实际发现9个变体：
+# - full, simple, nolight, physics, physics_noRandom_method,
+#   physics_noRandom_noTen_method, simple_timeRandom_method (7个新版40000权重)
+# - full_old, simple_old (2个固定旧版权重)
+```
+
+### **使用方法** - **2025-10-22更新**
+
+```bash
+# 仿真数据集（默认，使用4个标准checkpoint）
+python3 src/tools/generate_main_dataset.py --test --num_samples 1
+
+# 真实数据集（EVK4，自动扫描所有40000权重，测试模式）⭐推荐
+python3 src/tools/generate_main_dataset.py --real \
+  --input_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/input \
+  --target_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/target \
+  --test --num_samples 1
+
+# 真实数据集（完整运行，处理所有文件）
+python3 src/tools/generate_main_dataset.py --real \
+  --input_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/input \
+  --target_dir /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/EVK4/target
+```
+
+### **输出目录结构** - **2025-10-22更新**
+
+**仿真模式** (`MainSimu_data/`):
+```
+MainSimu_data/
+├── input/               # 原始含炫光数据
+├── target/              # 目标去炫光数据
+├── output_full/         # UNet full权重（新版）
+├── output_simple/       # UNet simple权重（新版）
+├── output_full_old/     # UNet full权重（旧版）
+├── output_simple_old/   # UNet simple权重（旧版）
+├── inputpfda/           # PFD-A结果
+├── inputpfdb/           # PFD-B结果
+├── inputefr/            # EFR结果
+├── outputbaseline/      # Baseline结果
+└── visualize/{filename}/
+    ├── input.mp4
+    ├── target.mp4
+    ├── unet_full.mp4
+    ├── unet_simple.mp4
+    ├── unet_full_old.mp4
+    ├── unet_simple_old.mp4
+    ├── pfda_output.mp4
+    ├── pfdb_output.mp4
+    ├── efr_output.mp4
+    └── baseline_output.mp4
+```
+
+**真实模式** (`MainReal_data/`) - **⭐新增**:
+```
+MainReal_data/
+├── input/                           # 原始含炫光数据
+├── target/                          # 目标去炫光数据
+├── output_full/                     # UNet full权重
+├── output_simple/                   # UNet simple权重
+├── output_nolight/                  # UNet nolight权重⭐
+├── output_physics/                  # UNet physics权重⭐
+├── output_physics_noRandom_method/  # UNet physics_noRandom_method权重⭐
+├── output_physics_noRandom_noTen_method/ # UNet physics_noRandom_noTen_method权重⭐
+├── output_simple_timeRandom_method/ # UNet simple_timeRandom_method权重⭐
+├── output_full_old/                 # UNet full权重（旧版）
+├── output_simple_old/               # UNet simple权重（旧版）
+├── inputpfda/                       # PFD-A结果
+├── inputpfdb/                       # PFD-B结果
+├── inputefr/                        # EFR结果
+├── outputbaseline/                  # Baseline结果
+└── visualize/{filename}/
+    ├── input.mp4
+    ├── target.mp4
+    ├── unet_full.mp4
+    ├── unet_simple.mp4
+    ├── unet_nolight.mp4            ⭐
+    ├── unet_physics.mp4            ⭐
+    ├── unet_physics_noRandom_method.mp4 ⭐
+    ├── unet_physics_noRandom_noTen_method.mp4 ⭐
+    ├── unet_simple_timeRandom_method.mp4 ⭐
+    ├── unet_full_old.mp4
+    ├── unet_simple_old.mp4
+    ├── pfda_output.mp4
+    ├── pfdb_output.mp4
+    ├── efr_output.mp4
+    └── baseline_output.mp4
+```
+
+**处理方法总结** - **2025-10-22**:
+- **仿真模式**: 4个UNet + 4个传统方法 = **8种方法**
+- **真实模式**: 9个UNet + 4个传统方法 = **13种方法** ⭐
+
+---
+
+## DSEC数据集生成工具 - **2025-10-22最新更新** ⭐**真实数据处理**
+
+### **核心功能**
 
 **位置**: `src/tools/generate_dsec_dataset.py`
+
+**✅ 从长炫光文件提取100ms段并处理**:
+- **内存安全提取**: 从长炫光文件（1-5GB）中提取100ms段，避免内存溢出
+- **时间采样**: 每400ms提取100ms (0-100ms, 400-500ms, 800-900ms, ...)
+- **10种处理方法**: **6个UNet权重** + PFD-A + PFD-B + EFR + Baseline ⭐**2025-10-22新增2个UNet**
+- **智能断点续存**: 检查所有方法输出是否存在，只处理缺失的 ⭐**2025-10-22重大修复**
+
+### **UNet权重配置** - **2025-10-22新增**
+
+```python
+self.unet_checkpoints = {
+    'simple': 'checkpoints/event_voxel_deflare_simple/checkpoint_epoch_0031_iter_040000.pth',
+    'full': 'checkpoints/event_voxel_deflare_full/checkpoint_epoch_0031_iter_040000.pth',
+    'physics_noRandom_method': 'checkpoints/physics_noRandom_method/checkpoint_epoch_0031_iter_040000.pth',  # ⭐新增
+    'physics_noRandom_noTen_method': 'checkpoints/event_voxel_deflare_physics_noRandom_noTen_method/checkpoint_epoch_0031_iter_040000.pth',  # ⭐新增
+    'full_old': 'checkpoints_old/event_voxel_deflare_full/checkpoint_epoch_0032_iter_076250.pth',
+    'simple_old': 'checkpoints_old/event_voxel_deflare_simple/checkpoint_epoch_0027_iter_076250.pth',
+}
+```
+
+### **技术架构**
 
 **数据流**:
 ```
 长炫光文件 → 内存安全提取100ms → DSEC_data/input/ →
-    ├── UNet3D → DSEC_data/output/
-    ├── PFD → DSEC_data/inputpfds/
+    ├── UNet3D (6个权重) → output_full/, output_simple/, output_physics_noRandom_method/,
+    │                       output_physics_noRandom_noTen_method/, output_full_old/, output_simple_old/
+    ├── PFD-A → DSEC_data/inputpfda/
+    ├── PFD-B → DSEC_data/inputpfdb/
     ├── EFR → DSEC_data/inputefr/
     └── Baseline → DSEC_data/outputbaseline/
 → 统一可视化 → DSEC_data/visualize/{filename}/
@@ -1321,13 +1459,19 @@ def extract_100ms_segment_safe(self, file_path: Path, start_time_us: int) -> np.
 
 **2. 直接调用处理器类** - **避免subprocess开销**:
 ```python
-# 初始化所有处理器
-self.pfd_processor = BatchPFDProcessor(debug=False)
+# 初始化所有处理器 - 2025-10-21更新
+self.pfd_processor_a = BatchPFDProcessor(debug=False)
+self.pfd_processor_a.pfds_params['score_select'] = 1  # PFD-A
+
+self.pfd_processor_b = BatchPFDProcessor(debug=False)
+self.pfd_processor_b.pfds_params['score_select'] = 0  # PFD-B
+
 self.efr_processor = BatchEFRProcessor(debug=False)
 
 # 直接调用
-self.pfd_processor.process_single_file(input_h5, output_h5, file_idx=0)
-self.efr_processor.process_single_file(input_h5, output_h5, file_idx=0)
+self.pfd_processor_a.process_single_file(input_h5, pfda_h5, file_idx=0)
+self.pfd_processor_b.process_single_file(input_h5, pfdb_h5, file_idx=0)
+self.efr_processor.process_single_file(input_h5, efr_h5, file_idx=0)
 ```
 
 **3. Baseline直接实现** - **无需external调用**:
@@ -1340,122 +1484,86 @@ def run_baseline_processing(self, input_h5: Path, output_h5: Path):
     self.save_h5_events(output_events, output_h5)
 ```
 
-### **使用方法**
+### **使用方法** - **2025-10-21更新**
 
-**基础使用**:
 ```bash
-# 环境准备
-/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3
-
-# 生成1个样本（测试）
-python3 src/tools/generate_dsec_dataset.py --num_samples 1
-
-# 批量生成5个样本
-python3 src/tools/generate_dsec_dataset.py --num_samples 5
-
-# 批量生成10个样本
-python3 src/tools/generate_dsec_dataset.py --num_samples 10
+# 完整运行（自动处理所有长H5文件，带断点续存）
+python3 src/tools/generate_dsec_dataset.py
 
 # 自定义flare源目录
-python3 src/tools/generate_dsec_dataset.py --num_samples 5 \
+python3 src/tools/generate_dsec_dataset.py \
   --flare_dir "/mnt/e/2025/event_flick_flare/main/data/flare_events"
+
+# Debug模式
+python3 src/tools/generate_dsec_dataset.py --debug
 ```
 
-### **输出目录结构**
+**关键说明**:
+- **无`--num_samples`参数**: 自动处理所有文件，每400ms提取100ms
+- **断点续存**: 自动解析已有文件名，跳过已处理段
+- **时间采样**: 0-100ms, 400-500ms, 800-900ms, ... (间隔400ms)
+
+### **关键技术修复** - **2025-10-22**
+
+**1. 智能断点续存**:
+```python
+def _check_all_outputs_exist(self, filename: str) -> bool:
+    """检查所有方法的输出是否都存在，只有全部存在才跳过"""
+    # 检查6个UNet变体 + 4个传统方法
+    # 只有全部10种方法都完成才返回True
+```
+
+**2. 损坏数据段自动跳过**:
+```python
+# H5文件x坐标损坏时自动捕获并跳过
+except OSError as e:
+    if "B-tree signature" in str(e):
+        print("⏭️ Skipping corrupted segment")
+        return None
+```
+
+**3. 文件名复用机制**:
+```python
+def find_existing_filename(self, source_file, start_time):
+    """查找已存在的文件（忽略datetime），避免重复生成"""
+    pattern = f"real_flare_{source}_t{time}ms_*.h5"
+    matches = list(self.input_dir.glob(pattern))
+    return matches[0].name if matches else generate_new()
+```
+
+### **输出目录结构** - **2025-10-22更新**
 
 ```
 DSEC_data/
 ├── input/                    # 提取的100ms段
-│   └── real_flare_zurich_city_03_a_t34867ms_20251011_120721.h5
-├── output/                   # UNet3D去炫光结果 (42%压缩)
-│   └── real_flare_zurich_city_03_a_t34867ms_20251011_120721.h5
-├── inputpfds/                # PFD去噪结果 (57%压缩)
-│   └── real_flare_zurich_city_03_a_t34867ms_20251011_120721.h5
+├── output_full/              # UNet full权重（新版）
+├── output_simple/            # UNet simple权重（新版）
+├── output_physics_noRandom_method/         # ⭐新增
+├── output_physics_noRandom_noTen_method/   # ⭐新增
+├── output_simple/            # UNet simple权重（新版）
+├── output_full_old/          # UNet full权重（旧版）⭐
+├── output_simple_old/        # UNet simple权重（旧版）⭐
+├── inputpfda/                # PFD-A结果 ⭐
+├── inputpfdb/                # PFD-B结果 ⭐
 ├── inputefr/                 # EFR线性滤波结果
-│   └── real_flare_zurich_city_03_a_t34867ms_20251011_120721.h5
-├── outputbaseline/           # Baseline编解码结果 (50%压缩)
-│   └── real_flare_zurich_city_03_a_t34867ms_20251011_120721.h5
-└── visualize/
-    └── real_flare_zurich_city_03_a_t34867ms_20251011_120721/
-        ├── input.mp4           (4.2MB) ✅
-        ├── unet_output.mp4     (3.3MB) ✅
-        ├── pfd_output.mp4      (3.0MB) ✅
-        ├── efr_output.mp4      (待调试)
-        └── baseline_output.mp4 (3.8MB) ✅
+├── outputbaseline/           # Baseline编解码结果
+└── visualize/{filename}/
+    ├── input.mp4
+    ├── unet_full.mp4
+    ├── unet_simple.mp4
+    ├── unet_full_old.mp4     ⭐
+    ├── unet_simple_old.mp4   ⭐
+    ├── pfda_output.mp4       ⭐
+    ├── pfdb_output.mp4       ⭐
+    ├── efr_output.mp4
+    └── baseline_output.mp4
 ```
 
-### **实测性能** - **2025-10-11更新**
+### **处理方法总结** - **2025-10-21最终版**
 
-**测试文件**: `zurich_city_03_a.h5` (1.7GB原始文件)
+**两个生成器都支持8种方法**:
+1-2. UNet full/simple（新版: `epoch_0031_iter_040000.pth`）
+3-4. UNet full_old/simple_old（旧版: `epoch_0032/0027_iter_076250.pth`）⭐新增
+5-6. PFD-A/B（去噪/去频闪, score_select=1/0）
+7-8. EFR + Baseline
 
-| 处理步骤 | 输入事件 | 输出事件 | 压缩率 | 处理时间 | 状态 |
-|---------|---------|---------|--------|----------|------|
-| **提取100ms** | N/A | ~1.8M | N/A | <1秒 | ✅ |
-| **UNet3D×5** | 1.8M | 各不同 | 27-42% | ~75秒 | ✅ |
-| **PFD** | 1.8M | ~990K | 57% | ~50秒 | ✅ |
-| **EFR** | 1.8M | ~506K | 27% | ~53秒 | ✅ |
-| **Baseline** | 1.8M | ~878K | 50% | ~5秒 | ✅ |
-| **可视化** | N/A | 9个MP4 | N/A | ~45秒 | ✅ |
-| **总耗时/段** | N/A | N/A | N/A | ~4分钟 | ✅ |
-
-### **多UNet权重配置** - **2025-10-11新增**
-
-| 权重名称 | Checkpoint路径 | 训练方法 | 输出目录 |
-|---------|---------------|---------|---------|
-| **standard** | `checkpoint_epoch_0027_iter_077500.pth` | 标准训练 | `output/` |
-| **full** | `event_voxel_deflare_full/best_checkpoint.pth` | Full参数 | `output_full/` |
-| **simple** | `event_voxel_deflare_simple/best_checkpoint.pth` | Simple训练 | `output_simple/` |
-| **simple_timeRandom** | `simple_timeRandom_method/best_checkpoint.pth` | Time随机 | `output_simple_timeRandom/` |
-| **physics_noRandom** | `physics_noRandom_method/best_checkpoint.pth` | 物理无随机 | `output_physics_noRandom/` |
-
-### **技术亮点总结** - **2025-10-11更新**
-
-1. ✅ **内存安全**: 先读时间戳→找索引范围→只读取需要的部分
-2. ✅ **顺序采样**: 400ms间隔时间采样，避免重复I/O
-3. ✅ **断点续存**: 解析文件名自动跳过已处理段
-4. ✅ **多权重并行**: 5个UNet权重自动处理，便于对比
-5. ✅ **代码复用**: 直接调用BatchPFDProcessor/BatchEFRProcessor类
-6. ✅ **统一可视化**: 所有方法结果（9个视频）自动生成在同一文件夹
-
-### **依赖要求**
-
-```bash
-# 必需依赖
-pip install hdf5plugin  # H5文件gzip压缩支持
-
-# 已有依赖
-- h5py
-- numpy
-- torch (UNet3D)
-- opencv (EFR)
-```
-
----
-
-## 主实验数据集生成器 - **2025-10-21新增** ⭐**论文主实验工具**
-
-**位置**: `src/tools/generate_main_dataset.py`
-
-**功能**: 统一处理仿真和真实数据集（100ms固定长度H5文件），用9种方法生成论文主实验数据集
-
-**9种方法**:
-- 5个UNet权重（standard/full/simple/simple_timeRandom/physics_noRandom）
-- PFD-A（去噪）+ PFD-B（去频闪）
-- EFR（线性滤波）+ Baseline（编解码）
-
-**输出**: `{output_base}/` 包含input/target/9种方法结果/可视化视频
-
-**使用**:
-```bash
-# 仿真数据集（默认background_with_flare_events_test）
-python3 src/tools/generate_main_dataset.py --test --num_samples 3
-python3 src/tools/generate_main_dataset.py  # 全部50个文件（~4小时）
-
-# 真实数据集（DSEC/EVK4等）
-python3 src/tools/generate_main_dataset.py \
-  --input_dir EVK4/input \
-  --target_dir EVK4/target \
-  --output_base EVK4_results
-```
-
-**关键设计**: 仿真/真实数据复用同一pipeline，只需切换输入目录即可

@@ -64,32 +64,35 @@ class DSECDatasetGenerator:
         self.output_base = Path(output_base)
         self.debug = debug
 
-        # 创建输出目录结构
+        # 创建输出目录结构（基础目录）
         self.input_dir = self.output_base / "input"
-        self.inputpfds_dir = self.output_base / "inputpfds"
-        self.output_dir = self.output_base / "output"  # 标准权重
-        self.output_full_dir = self.output_base / "output_full"
-        self.output_simple_dir = self.output_base / "output_simple"
-        self.output_simple_timeRandom_dir = self.output_base / "output_simple_timeRandom"
-        self.output_physics_noRandom_dir = self.output_base / "output_physics_noRandom"
+        self.inputpfda_dir = self.output_base / "inputpfda"  # PFD-A (score_select=1)
+        self.inputpfdb_dir = self.output_base / "inputpfdb"  # PFD-B (score_select=0)
         self.outputbaseline_dir = self.output_base / "outputbaseline"
         self.inputefr_dir = self.output_base / "inputefr"
         self.visualize_dir = self.output_base / "visualize"
 
-        # UNet checkpoint配置（使用绝对路径避免WSL I/O问题）
+        # UNet checkpoint配置 - 2025-10-22新增physics_noRandom和physics_noRandom_noTen
         checkpoint_base = PROJECT_ROOT / "checkpoints"
+        checkpoint_old_base = PROJECT_ROOT / "checkpoints_old"
         self.unet_checkpoints = {
-            'standard': str(checkpoint_base / 'event_voxel_deflare' / 'checkpoint_epoch_0027_iter_077500.pth'),
-            'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0032_iter_076250.pth'),  # 最新训练权重
-            'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'best_checkpoint.pth'),
-            'simple_timeRandom': str(checkpoint_base / 'event_voxel_deflare_simple_timeRandom_method' / 'best_checkpoint.pth'),
-            'physics_noRandom': str(checkpoint_base / 'physics_noRandom_method' / 'best_checkpoint.pth')
+            'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'physics_noRandom_method': str(checkpoint_base / 'physics_noRandom_method' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'physics_noRandom_noTen_method': str(checkpoint_base / 'event_voxel_deflare_physics_noRandom_noTen_method' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'full_old': str(checkpoint_old_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0032_iter_076250.pth'),
+            'simple_old': str(checkpoint_old_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0027_iter_076250.pth'),
         }
 
-        # 创建所有必要的目录
-        for dir_path in [self.input_dir, self.inputpfds_dir, self.output_dir,
-                         self.output_full_dir, self.output_simple_dir,
-                         self.output_simple_timeRandom_dir, self.output_physics_noRandom_dir,
+        # 为每个UNet变体创建输出目录
+        self.unet_output_dirs = {}
+        for variant_name in self.unet_checkpoints.keys():
+            output_dir = self.output_base / f"output_{variant_name}"
+            self.unet_output_dirs[variant_name] = output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 创建基础目录
+        for dir_path in [self.input_dir, self.inputpfda_dir, self.inputpfdb_dir,
                          self.outputbaseline_dir, self.inputefr_dir, self.visualize_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +104,12 @@ class DSECDatasetGenerator:
         )
 
         # 初始化处理器
-        self.pfd_processor = BatchPFDProcessor(debug=False)
+        self.pfd_processor_a = BatchPFDProcessor(debug=False)
+        self.pfd_processor_a.pfds_params['score_select'] = 1  # PFD-A
+
+        self.pfd_processor_b = BatchPFDProcessor(debug=False)
+        self.pfd_processor_b.pfds_params['score_select'] = 0  # PFD-B
+
         self.efr_processor = BatchEFRProcessor(debug=False)
 
         print(f"🚀 DSEC Dataset Generator initialized")
@@ -225,11 +233,19 @@ class DSECDatasetGenerator:
                 print(f"  ⚠️  No events in selected time window")
                 return np.empty((0, 4))
 
-            # Step 3: 只读取找到的范围（内存安全）
-            t = t_dataset[idx_start:idx_end]
-            x = events_group['x'][idx_start:idx_end]
-            y = events_group['y'][idx_start:idx_end]
-            p = events_group['p'][idx_start:idx_end]
+            # Step 3: 只读取找到的范围（内存安全，带错误处理）
+            try:
+                t = t_dataset[idx_start:idx_end]
+                x = events_group['x'][idx_start:idx_end]
+                y = events_group['y'][idx_start:idx_end]
+                p = events_group['p'][idx_start:idx_end]
+            except OSError as e:
+                if "B-tree signature" in str(e) or "filter returned failure" in str(e):
+                    print(f"  ❌ H5 data corrupted (x/y/p coordinate): {e}")
+                    print(f"  ⏭️  Skipping corrupted segment at {start_time_us/1000:.1f}ms")
+                    return None  # 返回None表示损坏段
+                else:
+                    raise  # 其他错误继续抛出
 
             # 极性转换（统一为-1/1格式）
             p_converted = np.where(p == 1, 1, -1)
@@ -300,18 +316,69 @@ class DSECDatasetGenerator:
             events_group.create_dataset('p', data=events[:, 3].astype(np.int8),
                                        compression='gzip', compression_opts=9)
 
+    def _check_all_outputs_exist(self, filename: str) -> bool:
+        """
+        检查某个文件的所有方法输出是否都存在
+
+        Args:
+            filename: 输入文件名
+
+        Returns:
+            True if 所有输出都存在, False otherwise
+        """
+        # 检查input
+        if not (self.input_dir / filename).exists():
+            return False
+
+        # 检查所有UNet变体
+        for variant_name, output_dir in self.unet_output_dirs.items():
+            if not (output_dir / filename).exists():
+                return False
+
+        # 检查传统方法
+        if not (self.inputpfda_dir / filename).exists():
+            return False
+        if not (self.inputpfdb_dir / filename).exists():
+            return False
+        if not (self.inputefr_dir / filename).exists():
+            return False
+        if not (self.outputbaseline_dir / filename).exists():
+            return False
+
+        # 所有输出都存在
+        return True
+
+    def find_existing_filename(self, source_file: Path, start_time_us: int) -> str:
+        """
+        查找已存在的文件名（基于source和time，忽略datetime）
+
+        Returns:
+            已存在的文件名，如果不存在则生成新文件名
+        """
+        source_name = source_file.stem
+        time_ms = int(start_time_us / 1000)
+
+        # 查找匹配的文件（忽略datetime部分）
+        pattern = f"real_flare_{source_name}_t{time_ms}ms_*.h5"
+
+        # 在input目录查找
+        matches = list(self.input_dir.glob(pattern))
+        if matches:
+            # 返回第一个匹配的文件名（basename）
+            return matches[0].name
+
+        # 如果不存在，生成新文件名
+        datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"real_flare_{source_name}_t{time_ms}ms_{datetime_str}.h5"
+        return filename
+
     def generate_filename(self, source_file: Path, start_time_us: int) -> str:
         """
-        生成DSEC标准文件名
+        生成DSEC标准文件名（优先使用已存在的文件名）
 
         格式: real_flare_{source}_t{time}ms_{datetime}.h5
         """
-        source_name = source_file.stem  # 例如：zurich_city_03_a
-        time_ms = int(start_time_us / 1000)
-        datetime_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        filename = f"real_flare_{source_name}_t{time_ms}ms_{datetime_str}.h5"
-        return filename
+        return self.find_existing_filename(source_file, start_time_us)
 
     def run_unet_inference(self, input_h5: Path, output_h5: Path, checkpoint_path: str, variant_name: str = "standard"):
         """
@@ -376,23 +443,23 @@ class DSECDatasetGenerator:
 
     def run_all_unet_variants(self, input_h5: Path, filename: str) -> dict:
         """
-        运行所有UNet权重变体（顺序执行，带错误处理）
+        运行所有UNet权重变体（动态支持，带断点续存）
 
         Returns:
             {variant_name: output_h5_path} (只包含成功的)
         """
         outputs = {}
-        variants = [
-            ('standard', self.output_dir),
-            ('full', self.output_full_dir),
-            ('simple', self.output_simple_dir),
-            ('simple_timeRandom', self.output_simple_timeRandom_dir),
-            ('physics_noRandom', self.output_physics_noRandom_dir)
-        ]
+        total_variants = len(self.unet_checkpoints)
 
-        for variant_name, output_dir in variants:
+        for variant_name, checkpoint_path in self.unet_checkpoints.items():
+            output_dir = self.unet_output_dirs[variant_name]
             output_h5 = output_dir / filename
-            checkpoint_path = self.unet_checkpoints[variant_name]
+
+            # 断点续存：检查输出文件是否已存在
+            if output_h5.exists():
+                print(f"    ⏭️  UNet3D ({variant_name}) skipped - output exists")
+                outputs[variant_name] = output_h5
+                continue
 
             # 验证checkpoint存在
             if not Path(checkpoint_path).exists():
@@ -406,23 +473,50 @@ class DSECDatasetGenerator:
             if success and output_h5.exists():
                 outputs[variant_name] = output_h5
 
-        print(f"    📊 UNet variants completed: {len(outputs)}/5")
+        print(f"    📊 UNet variants completed: {len(outputs)}/{total_variants}")
         return outputs
 
-    def run_pfd_processing(self, input_h5: Path, output_h5: Path):
-        """运行PFD处理（直接调用）"""
-        print(f"  🔧 Running PFD processing...")
+    def run_pfda_processing(self, input_h5: Path, output_h5: Path):
+        """运行PFD-A处理（score_select=1，带断点续存）"""
+        # 断点续存
+        if output_h5.exists():
+            print(f"  ⏭️  PFD-A skipped - output exists")
+            return
+
+        print(f"  🔧 Running PFD-A processing...")
         try:
-            success = self.pfd_processor.process_single_file(input_h5, output_h5, file_idx=0)
+            success = self.pfd_processor_a.process_single_file(input_h5, output_h5, file_idx=0)
             if success:
-                print(f"  ✅ PFD processing completed")
+                print(f"  ✅ PFD-A processing completed")
             else:
-                print(f"  ❌ PFD processing failed")
+                print(f"  ❌ PFD-A processing failed")
         except Exception as e:
-            print(f"  ❌ PFD processing failed: {e}")
+            print(f"  ❌ PFD-A processing failed: {e}")
+
+    def run_pfdb_processing(self, input_h5: Path, output_h5: Path):
+        """运行PFD-B处理（score_select=0，带断点续存）"""
+        # 断点续存
+        if output_h5.exists():
+            print(f"  ⏭️  PFD-B skipped - output exists")
+            return
+
+        print(f"  🔧 Running PFD-B processing...")
+        try:
+            success = self.pfd_processor_b.process_single_file(input_h5, output_h5, file_idx=0)
+            if success:
+                print(f"  ✅ PFD-B processing completed")
+            else:
+                print(f"  ❌ PFD-B processing failed")
+        except Exception as e:
+            print(f"  ❌ PFD-B processing failed: {e}")
 
     def run_efr_processing(self, input_h5: Path, output_h5: Path):
-        """运行EFR处理（直接调用）"""
+        """运行EFR处理（直接调用，带断点续存）"""
+        # 断点续存
+        if output_h5.exists():
+            print(f"  ⏭️  EFR skipped - output exists")
+            return
+
         print(f"  🔧 Running EFR processing...")
         print(f"    Input: {input_h5.name} ({input_h5.stat().st_size/1024/1024:.1f}MB)")
         try:
@@ -440,7 +534,12 @@ class DSECDatasetGenerator:
             traceback.print_exc()
 
     def run_baseline_processing(self, input_h5: Path, output_h5: Path):
-        """运行Baseline（编解码only）处理（直接实现）"""
+        """运行Baseline（编解码only）处理（直接实现，带断点续存）"""
+        # 断点续存
+        if output_h5.exists():
+            print(f"  ⏭️  Baseline skipped - output exists")
+            return
+
         print(f"  🔧 Running Baseline processing...")
         try:
             # Baseline: Events → Voxel → Events (测试编解码保真度)
@@ -470,7 +569,8 @@ class DSECDatasetGenerator:
     def generate_visualizations(self, base_filename: str,
                                input_h5: Path,
                                unet_outputs: dict,
-                               pfd_h5: Path,
+                               pfda_h5: Path,
+                               pfdb_h5: Path,
                                efr_h5: Path,
                                baseline_h5: Path):
         """
@@ -494,7 +594,8 @@ class DSECDatasetGenerator:
 
         # 添加其他方法
         vis_tasks.extend([
-            (pfd_h5, "pfd_output"),
+            (pfda_h5, "pfda_output"),
+            (pfdb_h5, "pfdb_output"),
             (efr_h5, "efr_output"),
             (baseline_h5, "baseline_output")
         ])
@@ -524,27 +625,39 @@ class DSECDatasetGenerator:
         # Step 1: 内存安全地提取100ms段
         events_segment = self.extract_100ms_segment_safe(source_file, start_time)
 
+        # 检查是否损坏或为空
+        if events_segment is None:
+            print(f"    ⏭️  Segment corrupted, skipping...")
+            return False
+
         if len(events_segment) == 0:
             print(f"    ❌ No events in segment, skipping...")
             return False
 
-        # Step 2: 生成文件名并保存到input
+        # Step 2: 生成文件名并保存到input（如果不存在）
         filename = self.generate_filename(source_file, start_time)
         input_h5 = self.input_dir / filename
 
-        print(f"    💾 Saving to: {filename}")
-        self.save_h5_events(events_segment, input_h5)
+        if not input_h5.exists():
+            print(f"    💾 Saving to: {filename}")
+            self.save_h5_events(events_segment, input_h5)
+        else:
+            print(f"    ✅ Input already exists: {filename}")
 
-        # Step 3: 运行所有处理方法
+        # Step 3: 运行所有处理方法（带断点续存，只处理缺失的）
         print(f"    🔄 Processing with all methods...")
 
-        # UNet3D (所有5个变体)
-        print(f"    🧠 Running all UNet variants (5 models)...")
+        # UNet3D (所有变体，断点续存在run_all_unet_variants内部)
+        print(f"    🧠 Running all UNet variants ({len(self.unet_checkpoints)} models)...")
         unet_outputs = self.run_all_unet_variants(input_h5, filename)
 
-        # PFD
-        pfd_h5 = self.inputpfds_dir / filename
-        self.run_pfd_processing(input_h5, pfd_h5)
+        # PFD-A
+        pfda_h5 = self.inputpfda_dir / filename
+        self.run_pfda_processing(input_h5, pfda_h5)
+
+        # PFD-B
+        pfdb_h5 = self.inputpfdb_dir / filename
+        self.run_pfdb_processing(input_h5, pfdb_h5)
 
         # EFR
         efr_h5 = self.inputefr_dir / filename
@@ -557,7 +670,7 @@ class DSECDatasetGenerator:
         # Step 4: 生成可视化
         print(f"    📊 Generating visualizations...")
         self.generate_visualizations(
-            filename, input_h5, unet_outputs, pfd_h5, efr_h5, baseline_h5
+            filename, input_h5, unet_outputs, pfda_h5, pfdb_h5, efr_h5, baseline_h5
         )
 
         print(f"    ✅ Segment completed: {filename}")
@@ -616,14 +729,17 @@ class DSECDatasetGenerator:
             for sample_idx, start_time in enumerate(time_samples, 1):
                 print(f"\n  [Segment {sample_idx}/{len(time_samples)}]")
 
-                # 断点续存：跳过已处理的
-                if start_time in processed_times:
-                    print(f"    ⏭️  Skipping t={start_time/1000:.1f}ms (already processed)")
+                # 断点续存优化：检查所有方法的输出是否都存在
+                filename = self.generate_filename(source_file, start_time)
+                all_outputs_exist = self._check_all_outputs_exist(filename)
+
+                if all_outputs_exist:
+                    print(f"    ⏭️  Skipping t={start_time/1000:.1f}ms (all outputs exist)")
                     file_skipped += 1
                     total_skipped += 1
                     continue
 
-                # 处理新的采样点
+                # 处理新的采样点（input可能存在，但某些方法输出缺失）
                 try:
                     if self.process_single_segment(source_file, start_time):
                         file_processed += 1

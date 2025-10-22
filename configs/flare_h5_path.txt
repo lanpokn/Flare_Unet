@@ -24,3 +24,10 @@ real_flare_zurich_city_10_b_t104400ms_20251013_064414 is good
 real_flare_zurich_city_10_b_t110400ms_20251013_070422 is good
 real_flare_zurich_city_12_a_t21200ms_20251013_085212 is good
 real_flare_zurich_city_12_a_t33600ms_20251013_093306 is good
+
+
+simu:979 is also good
+983 is very good
+996 very good
+不好的：473，475，476，485，486，489，495
+499，979，980，981，984，985，987，990，992，993
