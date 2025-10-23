@@ -1285,17 +1285,21 @@ def __init__(self, debug: bool = False, debug_dir: str = 'debug_output/efr'):
 - **统一可视化**: 所有方法结果自动生成MP4视频
 - **断点续存**: 自动跳过已处理文件
 
-### **UNet权重配置** - **2025-10-22重大更新**
+### **UNet权重配置** - **2025-10-23重大更新**
 
-**仿真模式（默认）**:
+**仿真模式（默认）** - **⭐使用physics_noRandom_noTen数据集**:
 ```python
-# 4个标准checkpoint
+# 3个checkpoint: physics_noRandom_noTen_method + simple + old权重
 unet_checkpoints = {
     'simple': 'checkpoints/event_voxel_deflare_simple/checkpoint_epoch_0031_iter_040000.pth',
-    'full': 'checkpoints/event_voxel_deflare_full/checkpoint_epoch_0031_iter_040000.pth',
+    'physics_noRandom_noTen_method': 'checkpoints/event_voxel_deflare_physics_noRandom_noTen_method/checkpoint_epoch_0031_iter_040000.pth',  # ⭐替换full
     'full_old': 'checkpoints_old/event_voxel_deflare_full/checkpoint_epoch_0032_iter_076250.pth',
     'simple_old': 'checkpoints_old/event_voxel_deflare_simple/checkpoint_epoch_0027_iter_076250.pth',
 }
+
+# 数据集路径更新
+input_dir: datasimu2/physics_noRandom_noTen_method/background_with_flare_events_test
+target_dir: datasimu2/physics_noRandom_noTen_method/background_with_light_events_test
 ```
 
 **真实模式** (`--real`):
@@ -1310,7 +1314,7 @@ unet_checkpoints = {
 ### **使用方法** - **2025-10-22更新**
 
 ```bash
-# 仿真数据集（默认，使用4个标准checkpoint）
+# 仿真数据集（默认，使用physics_noRandom_noTen_method + simple + old权重）⭐已更新
 python3 src/tools/generate_main_dataset.py --test --num_samples 1
 
 # 真实数据集（EVK4，自动扫描所有40000权重，测试模式）⭐推荐
@@ -1327,23 +1331,23 @@ python3 src/tools/generate_main_dataset.py --real \
 
 ### **输出目录结构** - **2025-10-22更新**
 
-**仿真模式** (`MainSimu_data/`):
+**仿真模式** (`MainSimu_data/`) - **⭐2025-10-23更新**:
 ```
 MainSimu_data/
-├── input/               # 原始含炫光数据
-├── target/              # 目标去炫光数据
-├── output_full/         # UNet full权重（新版）
-├── output_simple/       # UNet simple权重（新版）
-├── output_full_old/     # UNet full权重（旧版）
-├── output_simple_old/   # UNet simple权重（旧版）
-├── inputpfda/           # PFD-A结果
-├── inputpfdb/           # PFD-B结果
-├── inputefr/            # EFR结果
-├── outputbaseline/      # Baseline结果
+├── input/                               # 原始含炫光数据（来自datasimu2/physics_noRandom_noTen_method/）
+├── target/                              # 目标去炫光数据
+├── output_physics_noRandom_noTen_method/  # UNet physics_noRandom_noTen权重⭐替换原full
+├── output_simple/                       # UNet simple权重（新版）
+├── output_full_old/                     # UNet full权重（旧版）
+├── output_simple_old/                   # UNet simple权重（旧版）
+├── inputpfda/                           # PFD-A结果
+├── inputpfdb/                           # PFD-B结果
+├── inputefr/                            # EFR结果
+├── outputbaseline/                      # Baseline结果
 └── visualize/{filename}/
     ├── input.mp4
     ├── target.mp4
-    ├── unet_full.mp4
+    ├── unet_physics_noRandom_noTen_method.mp4  ⭐替换原unet_full.mp4
     ├── unet_simple.mp4
     ├── unet_full_old.mp4
     ├── unet_simple_old.mp4
@@ -1389,9 +1393,9 @@ MainReal_data/
     └── baseline_output.mp4
 ```
 
-**处理方法总结** - **2025-10-22**:
-- **仿真模式**: 4个UNet + 4个传统方法 = **8种方法**
-- **真实模式**: 9个UNet + 4个传统方法 = **13种方法** ⭐
+**处理方法总结** - **2025-10-23**:
+- **仿真模式**: 4个UNet (physics_noRandom_noTen + simple + 2×old) + 4个传统方法 = **8种方法** ⭐数据集已更新
+- **真实模式**: 9个UNet + 4个传统方法 = **13种方法**
 
 ---
 

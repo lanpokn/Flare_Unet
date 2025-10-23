@@ -1,0 +1,36 @@
+debug:
+  enabled: false
+  max_segments_to_visualize: 3
+  output_dir: debug_output
+device: cuda
+inference:
+  batch_size: 1
+  device: cuda
+  input_dir: DSEC_data/input
+  num_bins: 8
+  num_segments: 5
+  output_dir: DSEC_data/output
+  segment_duration_us: 20000
+  sensor_size:
+  - 480
+  - 640
+logger:
+  log_dir: logs/inference
+  name: TensorBoardLogger
+manual_seed: 42
+model:
+  backbone: ResidualUNet3D
+  conv_padding: 1
+  dropout_prob: 0.1
+  f_maps:
+  - 32
+  - 64
+  - 128
+  - 256
+  in_channels: 1
+  layer_order: gcr
+  name: TrueResidualUNet3D
+  num_groups: 8
+  num_levels: 4
+  out_channels: 1
+  path: /mnt/e/BaiduSyncdisk/2025/event_flick_flare/Unet_main/checkpoints/event_voxel_deflare_simple/checkpoint_epoch_0031_iter_040000.pth

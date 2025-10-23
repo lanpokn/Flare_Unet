@@ -101,7 +101,7 @@ class MainDatasetGenerator:
         self.real_mode = real_mode
         # 默认使用仿真数据集路径
         if input_dir is None:
-            self.input_source_dir = PROJECT_ROOT / "data_simu/physics_method/background_with_flare_events_test"
+            self.input_source_dir = PROJECT_ROOT / "datasimu2/physics_noRandom_noTen_method/background_with_flare_events_test"
             # 仿真数据默认输出目录
             if output_base == "Main_data":
                 output_base = "MainSimu_data"
@@ -111,7 +111,7 @@ class MainDatasetGenerator:
         # Target目录可选（真实数据可能没有ground truth）
         if target_dir is None and input_dir is None:
             # 仅当使用默认仿真数据时，自动设置target
-            self.target_source_dir = PROJECT_ROOT / "data_simu/physics_method/background_with_light_events_test"
+            self.target_source_dir = PROJECT_ROOT / "datasimu2/physics_noRandom_noTen_method/background_with_light_events_test"
         elif target_dir is not None:
             self.target_source_dir = Path(target_dir)
         else:
@@ -147,10 +147,10 @@ class MainDatasetGenerator:
             for name in sorted(self.unet_checkpoints.keys()):
                 print(f"  • {name}")
         else:
-            # 仿真数据模式：仅使用simple和full + 固定的old权重
+            # 仿真数据模式：使用physics_noRandom_noTen_method和simple + 固定的old权重
             self.unet_checkpoints = {
                 'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0031_iter_040000.pth'),
-                'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0031_iter_040000.pth'),
+                'physics_noRandom_noTen_method': str(checkpoint_base / 'event_voxel_deflare_physics_noRandom_noTen_method' / 'checkpoint_epoch_0031_iter_040000.pth'),
                 **checkpoints_old_fixed
             }
 
@@ -316,6 +316,7 @@ class MainDatasetGenerator:
     def run_unet_inference(self, input_h5: Path, output_h5: Path, checkpoint_path: str, variant_name: str = "standard"):
         """运行UNet3D推理（复用generate_dsec_dataset.py的实现）"""
         import yaml
+        import time
         config_path = PROJECT_ROOT / "configs" / "inference_config.yaml"
 
         with open(config_path, 'r') as f:
@@ -354,8 +355,17 @@ class MainDatasetGenerator:
             print(f"    ❌ UNet3D ({variant_name}) exception: {e}")
             success = False
         finally:
+            # WSL文件系统兼容性：重试删除机制
             if temp_config_path.exists():
-                temp_config_path.unlink()
+                for retry in range(3):
+                    try:
+                        temp_config_path.unlink()
+                        break
+                    except PermissionError:
+                        if retry < 2:
+                            time.sleep(0.5)  # 等待Windows文件句柄释放
+                        else:
+                            print(f"    ⚠️  Warning: Could not delete temp config (will retry later)")
 
         return success
 
@@ -579,7 +589,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="主实验数据集生成器 - 统一处理仿真和真实数据集"
     )
-    parser.add_argument("--input_dir", help="输入目录 (默认: data_simu/physics_method/background_with_flare_events_test)")
+    parser.add_argument("--input_dir", help="输入目录 (默认: datasimu2/physics_noRandom_noTen_method/background_with_flare_events_test)")
     parser.add_argument("--target_dir", help="目标目录 (可选，默认仿真数据使用background_with_light_events_test)")
     parser.add_argument("--output_base", default="Main_data", help="输出基础目录 (默认Main_data，仿真自动改为MainSimu_data，真实自动改为MainReal_data)")
     parser.add_argument("--test", action="store_true", help="测试模式")

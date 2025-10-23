@@ -72,14 +72,19 @@ class DSECDatasetGenerator:
         self.inputefr_dir = self.output_base / "inputefr"
         self.visualize_dir = self.output_base / "visualize"
 
-        # UNet checkpoint配置 - 2025-10-22新增physics_noRandom和physics_noRandom_noTen
+        # UNet checkpoint配置 - 2025-10-22更新：7个新权重 + 2个旧权重
         checkpoint_base = PROJECT_ROOT / "checkpoints"
         checkpoint_old_base = PROJECT_ROOT / "checkpoints_old"
         self.unet_checkpoints = {
+            # 新版权重 (7个) - 所有40000步权重
             'simple': str(checkpoint_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0031_iter_040000.pth'),
             'full': str(checkpoint_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0031_iter_040000.pth'),
-            'physics_noRandom_method': str(checkpoint_base / 'physics_noRandom_method' / 'checkpoint_epoch_0031_iter_040000.pth'),
-            'physics_noRandom_noTen_method': str(checkpoint_base / 'event_voxel_deflare_physics_noRandom_noTen_method' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'physics': str(checkpoint_base / 'event_voxel_deflare_physics' / 'checkpoint_epoch_0031_iter_040000.pth'),  # ⭐新增
+            'physics_noRandom_method': str(checkpoint_base / 'physics_noRandom_method' / 'checkpoint_epoch_0031_iter_040000.pth'),  # ⭐新增
+            'physics_noRandom_noTen_method': str(checkpoint_base / 'event_voxel_deflare_physics_noRandom_noTen_method' / 'checkpoint_epoch_0031_iter_040000.pth'),  # ⭐新增
+            'nolight': str(checkpoint_base / 'event_voxel_deflare_nolight' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            'simple_timeRandom_method': str(checkpoint_base / 'event_voxel_deflare_simple_timeRandom_method' / 'checkpoint_epoch_0031_iter_040000.pth'),
+            # 旧版权重 (2个)
             'full_old': str(checkpoint_old_base / 'event_voxel_deflare_full' / 'checkpoint_epoch_0032_iter_076250.pth'),
             'simple_old': str(checkpoint_old_base / 'event_voxel_deflare_simple' / 'checkpoint_epoch_0027_iter_076250.pth'),
         }
@@ -634,18 +639,25 @@ class DSECDatasetGenerator:
             print(f"    ❌ No events in segment, skipping...")
             return False
 
-        # Step 2: 生成文件名并保存到input（如果不存在）
+        # Step 2: 生成文件名（优先复用已有文件名）
         filename = self.generate_filename(source_file, start_time)
         input_h5 = self.input_dir / filename
 
+        # Step 2.1: 检查是否所有输出都已存在（整体断点续存）
+        all_outputs_exist = self._check_all_outputs_exist(filename)
+        if all_outputs_exist:
+            print(f"    ⏭️  Segment fully processed, skipping: {filename}")
+            return True  # 所有输出都存在，跳过整个segment
+
+        # Step 2.2: 保存input（如果不存在）
         if not input_h5.exists():
             print(f"    💾 Saving to: {filename}")
             self.save_h5_events(events_segment, input_h5)
         else:
             print(f"    ✅ Input already exists: {filename}")
 
-        # Step 3: 运行所有处理方法（带断点续存，只处理缺失的）
-        print(f"    🔄 Processing with all methods...")
+        # Step 3: 运行所有处理方法（只处理缺失的输出）
+        print(f"    🔄 Processing missing methods...")
 
         # UNet3D (所有变体，断点续存在run_all_unet_variants内部)
         print(f"    🧠 Running all UNet variants ({len(self.unet_checkpoints)} models)...")
