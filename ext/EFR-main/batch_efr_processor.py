@@ -178,6 +178,9 @@ class BatchEFRProcessor:
             else:
                 self.logger.debug("Timestamps already start from 0, no adjustment needed")
 
+            # ⭐ Store original events for warmup period restoration
+            self.original_input_events = events_np.copy()
+
             # ⭐ Auto-calculate time range for EFR processing
             t_min_us = float(events_np[:, 0].min())  # Convert to Python float
             t_max_us = float(events_np[:, 0].max())  # Convert to Python float
@@ -213,19 +216,20 @@ class BatchEFRProcessor:
         """
         Convert EFR-processed TXT back to H5 format
         EFR output format: timestamp x y polarity (-1/1)
+        ⭐ NEW: Restore warmup period events (0-22ms) to maintain temporal alignment
         """
         try:
             import h5py
             import numpy as np
-            
+
             self.logger.debug(f"Converting {txt_file_path} back to {output_h5_path}")
-            
+
             # Read EFR output TXT file
             events_list = []
             with open(txt_file_path, 'r') as f:
                 # Skip header line (width height)
                 header = f.readline()
-                
+
                 for line in f:
                     parts = line.strip().split()
                     if len(parts) == 4:
@@ -233,16 +237,36 @@ class BatchEFRProcessor:
                         # Restore original timestamp range
                         t_original = float(t) + getattr(self, 'min_t_offset', 0)
                         events_list.append([t_original, float(x), float(y), float(p)])
-            
+
             if not events_list:
                 self.logger.warning("No events found in EFR output")
                 events_np = np.empty((0, 4))
             else:
                 events_np = np.array(events_list)
-                # Sort by timestamp to maintain temporal order
+
+            self.logger.debug(f"Loaded {len(events_np):,} EFR filtered events")
+
+            # ⭐ Restore warmup period events (EFR warmup期间的原始事件)
+            if hasattr(self, 'original_input_events') and len(self.original_input_events) > 0:
+                # 计算warmup阈值 (EFR输出的最小时间戳)
+                if len(events_np) > 0:
+                    efr_start_time = events_np[:, 0].min()
+                    warmup_events = self.original_input_events[
+                        self.original_input_events[:, 0] < efr_start_time
+                    ]
+
+                    # 恢复原始时间戳
+                    warmup_events[:, 0] = warmup_events[:, 0] + getattr(self, 'min_t_offset', 0)
+
+                    if len(warmup_events) > 0:
+                        self.logger.debug(f"Restoring {len(warmup_events):,} warmup events (0-{(efr_start_time)/1000:.1f}ms)")
+                        events_np = np.vstack([warmup_events, events_np])
+
+            # Sort by timestamp to maintain temporal order
+            if len(events_np) > 0:
                 events_np = events_np[np.argsort(events_np[:, 0])]
-            
-            self.logger.debug(f"Loaded {len(events_np):,} filtered events")
+
+            self.logger.debug(f"Final output: {len(events_np):,} events (with warmup restoration)")
             
             # Save to H5 format (matching project structure)
             with h5py.File(output_h5_path, 'w') as f:
