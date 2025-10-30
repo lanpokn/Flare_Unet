@@ -1,12 +1,12 @@
 base_frequency: 50
-data_id: temp_29
+data_id: temp_0
 delta_t: 10000
 img_height: 480
 img_width: 640
 input_event: events_raw.txt
 load_or_compute_bias: 0
 output_event: events_filter.txt
-process_ts_end: 0.199999
+process_ts_end: 2.050011
 process_ts_start: 0.0
 rho1: 0.6
 sampler_threshold: 0.7

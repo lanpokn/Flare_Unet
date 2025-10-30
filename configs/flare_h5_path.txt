@@ -35,3 +35,5 @@ simu:979 is also good
 
 real_flare_zurich_city_09_c_t40800ms_20251022_040955 is good
 real_flare_zurich_city_09_c_t58000ms_20251022_045244
+56800 05 is good?
+03 11200 05 is also good, find some 05, frame interpolation is hard to see distinguish

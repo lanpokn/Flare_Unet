@@ -1,13 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(conda activate:*)",
-      "Bash(python:*)",
-      "Bash(wslpath:*)",
+      "Read(//mnt/e/BaiduSyncdisk/2025/event_flick_flare/experiments/3D_reconstruction/datasets/lego2/events_h5/**)",
       "Bash(python3:*)",
-      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 ext/EFR-main/batch_efr_processor.py --input_dir MainSimu_data/good/input --output_dir MainSimu_data/good/inputefr_test --debug_dir debug_output/efr_test)",
-      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 -c \"\nimport sys\nsys.path.append(''''ext/EFR-main'''')\nfrom pathlib import Path\nfrom batch_efr_processor import BatchEFRProcessor\n\n# 单文件测试\nprocessor = BatchEFRProcessor(debug=False)\ninput_h5 = Path(''''MainSimu_data/good/input/composed_00470_bg_flare.h5'''')\noutput_h5 = Path(''''MainSimu_data/good/inputefr_test/test_warmup_fix.h5'''')\noutput_h5.parent.mkdir(parents=True, exist_ok=True)\n\nprocessor.process_single_file(input_h5, output_h5, file_idx=0)\nprint(''''✅ Processing complete'''')\n\")",
-      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3 -c \"\nimport sys\nsys.path.append(''src/data_processing'')\nfrom encode import load_h5_events\n\n# 对比修复前后\ninput_file = ''MainSimu_data/good/input/composed_00470_bg_flare.h5''\nefr_old = ''MainSimu_data/good/inputefr/composed_00470_bg_flare.h5''\nefr_new = ''MainSimu_data/good/inputefr_test/test_warmup_fix.h5''\n\ninput_events = load_h5_events(input_file)\nefr_old_events = load_h5_events(efr_old)\nefr_new_events = load_h5_events(efr_new)\n\nprint(''📊 Warmup恢复效果对比:'')\nprint(''='' * 60)\nprint(f''Input:     {len(input_events):,} events, {input_events[:, 0].min():.0f}-{input_events[:, 0].max():.0f} us'')\nprint(f''EFR (旧):  {len(efr_old_events):,} events, {efr_old_events[:, 0].min():.0f}-{efr_old_events[:, 0].max():.0f} us'')\nprint(f''EFR (新):  {len(efr_new_events):,} events, {efr_new_events[:, 0].min():.0f}-{efr_new_events[:, 0].max():.0f} us'')\nprint()\nprint(''🔍 时间范围修复:'')\nprint(f''旧版丢失: 0-{efr_old_events[:, 0].min():.0f} us ({efr_old_events[:, 0].min()/1000:.1f}ms)'')\nprint(f''新版恢复: 完整0-100ms ✅'')\nprint()\nprint(''📈 事件数量恢复:'')\nprint(f''旧版压缩率: {len(efr_old_events)/len(input_events)*100:.1f}%'')\nprint(f''新版压缩率: {len(efr_new_events)/len(input_events)*100:.1f}%'')\nprint(f''恢复事件数: {len(efr_new_events) - len(efr_old_events):,}'')\n\")"
+      "Read(//mnt/e/2025/event_flick_flare/object_detection/dsec-det-master/data/train/zurich_city_03_a/images/**)",
+      "Read(//mnt/e/2025/event_flick_flare/object_detection/dsec-det-master/data/train/zurich_city_03_a/images/left/distorted/**)",
+      "Bash(conda activate:*)",
+      "Read(//mnt/e/2025/event_flick_flare/object_detection/dsec-det-master/data/train/**)",
+      "Bash(/home/lanpoknlanpokn/miniconda3/envs/Umain2/bin/python3:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

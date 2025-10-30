@@ -1294,6 +1294,124 @@ def __init__(self, debug: bool = False, debug_dir: str = 'debug_output/efr'):
 
 ---
 
+## TimeLens数据集生成工具 - **2025-10-30最新完成** ⭐**重大更新**
+
+### **核心功能**
+
+**位置**: `src/tools/generate_timelens_dataset.py`
+
+**✅ 从DSEC生成TimeLens格式数据集**:
+- **数据源**: DSEC训练数据（zurich_city_03_a等）
+- **输出格式**: TimeLens标准格式（events/left/events.h5 + images/left/distorted/*.png + timestamps.txt）
+- **处理方法**: 8种（4×UNet + PFD-A/B + EFR + Baseline）
+- **内存安全**: 流式磁盘处理，支持任意长度数据
+
+### **关键技术修复 - 2025-10-30**
+
+**1. DSEC时间戳单位修复** - **重大Bug修复**:
+```python
+# ❌ 原错误: 误认为纳秒(ns)
+duration_ns = int(duration_seconds * 1e9)
+# 结果: 44秒序列被误认为0.044秒
+
+# ✅ 正确: DSEC使用微秒(μs)
+duration_us = int(duration_seconds * 1e6)
+# 结果: 44秒序列正确识别，2秒=40帧@20FPS
+```
+
+**2. DSEC相机帧率澄清**:
+- **RGB相机**: 20 FPS（全局快门，VGA分辨率）
+- **Event相机**: 异步，微秒级时间分辨率
+- **图像间隔**: ~50ms（不是50μs）
+
+**3. Tensor数据流修复**:
+```python
+# ✅ 完整数据流
+voxel = events_to_voxel(...)  # 返回Tensor (8,480,640)
+voxel_tensor = voxel.unsqueeze(0).unsqueeze(0).to(device)  # (1,1,8,480,640)
+output_voxel_tensor = model(voxel_tensor).cpu()[0,0]  # (8,480,640) Tensor
+output_events = voxel_to_events(output_voxel_tensor, ...)  # 期望Tensor输入
+```
+
+### **使用方法**
+
+```bash
+# 基础使用（默认2秒，40帧）
+python3 src/tools/generate_timelens_dataset.py
+
+# 自定义时长
+python3 src/tools/generate_timelens_dataset.py --duration 0.5  # 0.5秒，10帧
+
+# 自定义源目录
+python3 src/tools/generate_timelens_dataset.py \
+  --source /path/to/dsec/sequence \
+  --output custom_timelens \
+  --duration 1.0
+```
+
+### **输出结构**
+
+```
+timelens/
+├── zurich_city_03_a_0-2s_original/          # 原始数据
+│   ├── events/left/events.h5                # 相对时间戳（从0开始）
+│   ├── images/left/distorted/000000.png     # RGB图像
+│   └── images/timestamps.txt                # 图像时间戳（微秒）
+├── zurich_city_03_a_0-2s_unet_simple/       # UNet simple处理
+├── zurich_city_03_a_0-2s_unet_full/         # UNet full处理
+├── zurich_city_03_a_0-2s_unet_physics_noRandom_noTen/  # UNet physics处理
+├── zurich_city_03_a_0-2s_unet_simple_old/   # UNet simple旧权重
+├── zurich_city_03_a_0-2s_pfda/              # PFD-A处理
+├── zurich_city_03_a_0-2s_pfdb/              # PFD-B处理
+├── zurich_city_03_a_0-2s_efr/               # EFR线性滤波
+├── zurich_city_03_a_0-2s_baseline/          # Baseline编解码
+└── README.md                                # 数据集摘要
+```
+
+### **内存安全机制**
+
+**智能处理模式选择**:
+```python
+# 小文件（<30段或<500MB）：内存处理
+if num_segments <= 30 and estimated_memory_mb <= 500:
+    内存直接合并  # 快速
+
+# 大文件（>30段或>500MB）：流式磁盘处理
+else:
+    逐段处理→临时磁盘→分批合并  # 安全
+```
+
+**实测性能**:
+- **2秒DSEC数据**: 46M events, 97段 → 自动流式处理
+- **处理时间**: ~5-10分钟/方法（含UNet推理）
+- **内存占用**: <4GB（流式处理避免累积）
+
+### **技术要点**
+
+**DSEC H5格式**:
+```python
+# 时间戳单位: 微秒(μs)
+events/t: int64 相对时间戳
+events/x: uint16 (0-639)
+events/y: uint16 (0-479)
+events/p: uint8 (0=负事件, 1=正事件)
+t_offset: int64 绝对起始时间（微秒）
+```
+
+**TimeLens兼容性**:
+- ✅ 保持DSEC数据类型
+- ✅ 相对时间戳（从0开始）
+- ✅ 保留t_offset元数据
+- ✅ 图像文件名连续编号
+
+### **已知问题**
+
+- **UNet权重**: 需要4个checkpoint文件存在（simple/full/physics_noRandom_noTen/simple_old）
+- **PFD/EFR依赖**: 需要ext/PFD和ext/EFR-main可用
+- **WSL兼容**: 自动处理Windows路径转换
+
+---
+
 ## 主实验数据集生成工具 - **2025-10-22最新版** ⭐**论文核心工具**
 
 ### **核心功能**
